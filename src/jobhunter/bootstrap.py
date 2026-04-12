@@ -10,10 +10,11 @@ It will:
   2. Install CPU-only PyTorch
   3. Install all project dependencies
   4. Install Playwright + Chromium browser
-  5. Pre-download the BGE embedding model (~440MB)
-  6. Create config and data directories
-  7. Optionally download a GGUF model (~14GB)
-  8. Configure LLM model path
+  5. Download and install llama-server (from llama.cpp)
+  6. Pre-download the BGE embedding model (~440MB)
+  7. Create config and data directories
+  8. Optionally download a GGUF model (~14GB)
+  9. Configure LLM server paths
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ MIN_PYTHON = (3, 10)
 APP_DIR = Path.home() / ".jobhunter"
 DATA_DIR = APP_DIR / "data"
 MODELS_DIR = APP_DIR / "models"
+BIN_DIR = APP_DIR / "bin"
 CONFIG_PATH = APP_DIR / "config.json"
 
 # bootstrap.py lives at src/jobhunter/bootstrap.py -- repo root is two levels up
@@ -40,6 +42,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_CONFIG = Path(__file__).parent / "default_config.json"
 TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 BGE_MODEL = "BAAI/bge-base-en-v1.5"
+LLAMA_CPP_RELEASE_TAG = "b8762"
 
 # Recommended GGUF model
 GGUF_MODELS = {
@@ -210,8 +213,115 @@ def install_playwright() -> bool:
     return True
 
 
+def install_llama_server() -> bool:
+    """Step 5: Download and install llama-server binary."""
+    # Check if already in PATH
+    existing = shutil.which("llama-server")
+    if existing:
+        print(f"  llama-server already available: {existing}")
+        return True
+
+    # Check if already in our bin dir
+    if platform.system() == "Windows":
+        local_bin = BIN_DIR / "llama-server.exe"
+    else:
+        local_bin = BIN_DIR / "llama-server"
+
+    if local_bin.exists():
+        print(f"  llama-server already installed: {local_bin}")
+        _add_to_path(BIN_DIR)
+        return True
+
+    # Determine platform and download URL
+    system = platform.system()
+    machine = platform.machine().lower()
+
+    if system == "Windows":
+        asset_name = f"llama-{LLAMA_CPP_RELEASE_TAG}-bin-win-cpu-x64.zip"
+    elif system == "Darwin":
+        if machine in ("arm64", "aarch64"):
+            asset_name = f"llama-{LLAMA_CPP_RELEASE_TAG}-bin-macos-arm64.zip"
+        else:
+            asset_name = f"llama-{LLAMA_CPP_RELEASE_TAG}-bin-macos-x64.zip"
+    elif system == "Linux":
+        asset_name = f"llama-{LLAMA_CPP_RELEASE_TAG}-bin-linux-x64.zip"
+    else:
+        print(f"  WARNING: Unsupported platform '{system}'. Install llama-server manually.")
+        return True  # Non-fatal
+
+    url = f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_RELEASE_TAG}/{asset_name}"
+
+    print(f"  Downloading llama-server ({system} {machine})...")
+    print(f"  From: {url}")
+    print()
+
+    # Download to temp file
+    zip_path = BIN_DIR / asset_name
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not _download_with_progress(url, zip_path):
+        print("  WARNING: Failed to download llama-server.")
+        print("  You can install it manually from:")
+        print("    https://github.com/ggml-org/llama.cpp/releases")
+        return True  # Non-fatal
+
+    # Extract
+    print("  Extracting...")
+    import zipfile
+    try:
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            # Find llama-server binary in the archive
+            server_names = ["llama-server", "llama-server.exe"]
+            extracted = False
+            for member in zf.namelist():
+                basename = Path(member).name
+                if basename in server_names:
+                    # Extract just this file to BIN_DIR
+                    data = zf.read(member)
+                    dest = BIN_DIR / basename
+                    dest.write_bytes(data)
+                    if system != "Windows":
+                        dest.chmod(0o755)
+                    extracted = True
+                    print(f"  Installed: {dest}")
+
+            if not extracted:
+                # Fallback: extract everything
+                zf.extractall(str(BIN_DIR))
+                print(f"  Extracted all files to {BIN_DIR}")
+    except Exception as exc:
+        print(f"  WARNING: Failed to extract: {exc}")
+        return True  # Non-fatal
+    finally:
+        # Clean up zip
+        try:
+            zip_path.unlink()
+        except Exception:
+            pass
+
+    _add_to_path(BIN_DIR)
+
+    # Verify
+    if shutil.which("llama-server"):
+        print("  llama-server is now available in PATH")
+    else:
+        print(f"  llama-server installed to {BIN_DIR}")
+        print(f"  NOTE: You may need to add {BIN_DIR} to your system PATH,")
+        print(f"  or restart your terminal for the PATH change to take effect.")
+
+    return True
+
+
+def _add_to_path(bin_dir: Path) -> None:
+    """Add a directory to the current process PATH."""
+    bin_str = str(bin_dir)
+    current_path = os.environ.get("PATH", "")
+    if bin_str not in current_path:
+        os.environ["PATH"] = bin_str + os.pathsep + current_path
+
+
 def download_embedding_model() -> bool:
-    """Step 5: Pre-download the BGE embedding model."""
+    """Step 6: Pre-download the BGE embedding model."""
     print(f"  Downloading {BGE_MODEL} (~440MB on first run)...")
     print("  (This is the fast scoring model, not the LLM)")
     try:
@@ -333,47 +443,53 @@ def download_gguf_model() -> bool:
 
 
 def configure_llm() -> bool:
-    """Step 8: Verify or set the LLM model path and check for llama-server."""
-    # Check if model path is already configured
+    """Step 9: Verify or set the LLM model path and check for llama-server."""
     with open(CONFIG_PATH, encoding="utf-8") as f:
         config = json.load(f)
 
+    # -- llama-server binary --
+    llama_bin = shutil.which("llama-server")
+    if llama_bin:
+        print(f"  llama-server: {llama_bin}")
+        # Save the resolved path so the app doesn't depend on PATH
+        config.setdefault("llm_server", {})["binary"] = llama_bin
+    else:
+        # Check our bin dir directly
+        if platform.system() == "Windows":
+            local = BIN_DIR / "llama-server.exe"
+        else:
+            local = BIN_DIR / "llama-server"
+        if local.exists():
+            print(f"  llama-server: {local}")
+            config.setdefault("llm_server", {})["binary"] = str(local)
+        else:
+            print("  WARNING: llama-server not found.")
+            print("  LLM features won't work without it.")
+            print("  Everything else (scraping, BGE scoring, tracking) works fine.")
+
+    # -- GGUF model --
     model_path = config.get("llm_server", {}).get("model_path", "")
 
     if model_path and Path(model_path).is_file():
         size_gb = Path(model_path).stat().st_size / (1024**3)
-        print(f"  Model configured: {Path(model_path).name} ({size_gb:.1f} GB)")
+        print(f"  Model: {Path(model_path).name} ({size_gb:.1f} GB)")
     elif model_path:
         print(f"  WARNING: Configured model not found: {model_path}")
         response = input("  Enter path to a GGUF model file (or press Enter to skip): ").strip().strip('"').strip("'")
         if response:
             model_path = str(Path(response).resolve())
             config.setdefault("llm_server", {})["model_path"] = model_path
-            CONFIG_PATH.write_text(json.dumps(config, indent=4), encoding="utf-8")
     else:
-        # Check models directory
         existing = list(MODELS_DIR.glob("*.gguf"))
         if existing:
-            # Auto-select the first one found
             model_path = str(existing[0])
             config.setdefault("llm_server", {})["model_path"] = model_path
-            CONFIG_PATH.write_text(json.dumps(config, indent=4), encoding="utf-8")
             print(f"  Auto-configured model: {existing[0].name}")
         else:
             print("  No GGUF model configured.")
             print("  You can set it later in the Settings tab.")
 
-    # Check for llama-server
-    llama_bin = shutil.which("llama-server")
-    if llama_bin:
-        print(f"  llama-server found: {llama_bin}")
-    else:
-        print("  WARNING: llama-server not found in PATH.")
-        print("  Download llama.cpp and ensure llama-server is accessible.")
-        print("  https://github.com/ggml-org/llama.cpp/releases")
-        print("  LLM features won't work without it (scoring, cover letters).")
-        print("  Everything else (scraping, BGE scoring, tracking) works fine.")
-
+    CONFIG_PATH.write_text(json.dumps(config, indent=4), encoding="utf-8")
     return True
 
 
@@ -394,16 +510,17 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def main() -> int:
     _print_header("JobHunter Setup")
 
-    total = 8
+    total = 9
     steps = [
         (1, "Checking Python version...", check_python),
         (2, "Installing CPU-only PyTorch...", install_torch_cpu),
         (3, "Installing project dependencies...", install_requirements),
         (4, "Setting up Playwright + Chromium...", install_playwright),
-        (5, "Downloading embedding model...", download_embedding_model),
-        (6, "Creating config and directories...", setup_config_and_dirs),
-        (7, "Downloading LLM model (optional)...", download_gguf_model),
-        (8, "Configuring LLM server...", configure_llm),
+        (5, "Installing llama-server...", install_llama_server),
+        (6, "Downloading embedding model...", download_embedding_model),
+        (7, "Creating config and directories...", setup_config_and_dirs),
+        (8, "Downloading LLM model (optional)...", download_gguf_model),
+        (9, "Configuring LLM server...", configure_llm),
     ]
 
     failed = False
