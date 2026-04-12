@@ -79,7 +79,7 @@ def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def _pip_install(packages: list[str], extra_args: list[str] | None = None) -> bool:
-    cmd = [sys.executable, "-m", "pip", "install", "--quiet"]
+    cmd = [sys.executable, "-m", "pip", "install", "--progress-bar", "on"]
     if extra_args:
         cmd.extend(extra_args)
     cmd.extend(packages)
@@ -154,7 +154,9 @@ def install_torch_cpu() -> bool:
     except ImportError:
         pass
 
-    print("  Installing CPU-only PyTorch (this may take a few minutes)...")
+    print("  Installing CPU-only PyTorch...")
+    print("  (This is ~2GB and may take several minutes on slow connections)")
+    print()
 
     if platform.system() == "Darwin":
         print("  Detected macOS -- installing default PyTorch (includes MPS support)")
@@ -171,17 +173,21 @@ def install_requirements() -> bool:
         return False
 
     print("  Installing dependencies from requirements.txt...")
+    print("  (First run installs ~15 packages, may take a few minutes)")
+    print()
     result = _run([
-        sys.executable, "-m", "pip", "install", "--quiet", "-r", str(req_file)
+        sys.executable, "-m", "pip", "install", "--progress-bar", "on",
+        "-r", str(req_file)
     ])
     if result.returncode != 0:
         return False
 
     # Install the project itself in editable mode
+    print()
     print("  Installing jobhunter package...")
     result = _run([
-        sys.executable, "-m", "pip", "install", "--quiet", "-e",
-        str(_REPO_ROOT)
+        sys.executable, "-m", "pip", "install", "--progress-bar", "on",
+        "-e", str(_REPO_ROOT)
     ])
     return result.returncode == 0
 
@@ -195,7 +201,7 @@ def install_playwright() -> bool:
         print("  ERROR: Playwright not installed (should have been in step 3)")
         return False
 
-    print("  Installing Chromium browser for Playwright...")
+    print("  Installing Chromium browser for Playwright (~150MB)...")
     result = _run([sys.executable, "-m", "playwright", "install", "chromium"])
     if result.returncode != 0:
         print("  WARNING: Playwright chromium install failed.")
@@ -207,6 +213,7 @@ def install_playwright() -> bool:
 def download_embedding_model() -> bool:
     """Step 5: Pre-download the BGE embedding model."""
     print(f"  Downloading {BGE_MODEL} (~440MB on first run)...")
+    print("  (This is the fast scoring model, not the LLM)")
     try:
         from sentence_transformers import SentenceTransformer
         model = SentenceTransformer(BGE_MODEL, device="cpu")
