@@ -1,0 +1,34 @@
+TASK: Extract structured resume bullets from the following document text.
+
+Parse the resume content and extract each bullet point or accomplishment, organized by role/section.
+
+DOCUMENT TEXT:
+{{DOCUMENT}}
+
+SOURCE FILE: {{FILENAME}}
+
+For each role you identify, extract:
+- section: a category slug (e.g., "experience", "skills", "certifications", "education", "projects")
+- role: the job title and company (e.g., "VP Security Operations at Amherst Holdings")
+- bullets: list of individual accomplishment/responsibility statements
+
+RULES:
+- Extract bullets exactly as written. Do NOT rewrite, summarize, or embellish.
+- If a bullet spans multiple lines, combine it into one.
+- Strip bullet characters (-, *, o, numbers) from the start.
+- Ignore headers, contact info, and formatting artifacts.
+- If you cannot identify a role, use the section name only.
+
+Return ONLY valid JSON:
+{
+  "roles": [
+    {
+      "section": "experience",
+      "role": "Job Title at Company Name",
+      "bullets": [
+        "First bullet text here",
+        "Second bullet text here"
+      ]
+    }
+  ]
+}

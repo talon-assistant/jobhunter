@@ -1,0 +1,31 @@
+TASK: Select the best resume bullets for the target job description.
+
+You are tailoring a resume by SELECTING pre-written bullets from a library.
+You do NOT write, rewrite, or paraphrase. You ONLY pick which bullet IDs best fit the target job description.
+
+BULLET LIBRARY:
+{{LIBRARY}}
+
+PER-SECTION CAPS (maximum bullets per section):
+{{CAPS}}
+
+TARGET POSITION: {{POSITION}} at {{COMPANY}}
+
+JOB DESCRIPTION:
+{{JOB_DESCRIPTION}}
+
+SELECTION RULES:
+1. Return bullet IDs (integers) per section. Never exceed the cap for any section.
+2. Prefer bullets that echo skills, tools, frameworks, or outcomes mentioned in the JD.
+3. Preserve chronological storytelling: recent roles get more bullets, older roles fewer.
+4. If a section has no relevant bullets, return an empty list for it.
+5. Prioritize quantified achievements (metrics, dollar amounts, team sizes, percentages).
+
+Return ONLY valid JSON:
+{
+  "picks": {
+    "section_name": [bullet_id, bullet_id, ...],
+    ...
+  },
+  "rationale": "1-2 sentences explaining the overall angle and why these bullets were chosen"
+}

@@ -1,0 +1,27 @@
+# GUI
+dearpygui>=2.0.0
+
+# Embeddings (install CPU-only torch first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu)
+sentence-transformers>=3.0.0
+numpy>=1.26.0
+
+# HTTP
+requests>=2.31.0
+
+# Web scraping
+playwright>=1.45.0
+beautifulsoup4>=4.12.0
+trafilatura>=1.12.0
+lxml>=5.0.0
+
+# Document extraction
+PyMuPDF>=1.24.0
+python-docx>=1.1.0
+
+# XLSX export
+openpyxl>=3.1.0
+
+# Testing
+pytest>=8.0.0
+pytest-cov>=5.0.0

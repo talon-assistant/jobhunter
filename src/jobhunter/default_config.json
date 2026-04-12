@@ -1,0 +1,50 @@
+{
+    "llm": {
+        "endpoint": "http://localhost:8080/v1/chat/completions",
+        "health_endpoint": "http://localhost:8080/health",
+        "temperature": 0.3,
+        "max_tokens": 2048,
+        "timeout": 300
+    },
+    "llm_server": {
+        "mode": "manual",
+        "binary": "llama-server",
+        "model_path": "",
+        "port": 8080,
+        "ctx_size": 8192,
+        "threads": 4,
+        "n_gpu_layers": 0,
+        "extra_args": []
+    },
+    "scoring": {
+        "fast_threshold": 40,
+        "deep_threshold": 50,
+        "batch_size": 2,
+        "jd_max_chars": 1500,
+        "auto_archive_below": 30
+    },
+    "scraping": {
+        "linkedin_profile_dir": "",
+        "scrape_delay": 4,
+        "enabled_boards": ["linkedin", "dice", "builtin", "glassdoor"]
+    },
+    "resume": {
+        "name": "",
+        "email": "",
+        "phone": "",
+        "location": "",
+        "output_dir": "",
+        "style_rules": "No em dashes. Direct executive tone. 3-4 paragraphs. Under one page."
+    },
+    "export": {
+        "output_dir": ""
+    },
+    "appearance": {
+        "font_size": 14
+    },
+    "data": {
+        "job_db_path": "data/jobhunter.db",
+        "resume_db_path": "data/resume_library.db",
+        "library_md_path": "data/resumelibrary.md"
+    }
+}

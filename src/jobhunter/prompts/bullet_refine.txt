@@ -1,0 +1,17 @@
+TASK: Refine a rough note into a polished resume bullet point.
+
+The user has written a rough note about an accomplishment. Transform it into a professional,
+concise resume bullet point that:
+- Starts with a strong action verb (Led, Built, Reduced, Designed, etc.)
+- Includes quantified results where possible (metrics, percentages, dollar amounts, team sizes)
+- Is one sentence, under 25 words if possible
+- Uses industry-standard terminology
+- Does NOT fabricate any details not present in the original note
+
+ROUGH NOTE:
+{{NOTE}}
+
+CONTEXT (user's role/company if available):
+{{CONTEXT}}
+
+Return ONLY the polished bullet point text. No quotes, no bullet character, no explanation.

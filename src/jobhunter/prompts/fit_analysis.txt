@@ -1,0 +1,26 @@
+TASK: Score each job listing for fit against this resume. Evaluate seniority match, domain depth, relevant skills, and experience alignment.
+
+RESUME:
+{{RESUME}}
+
+JOB LISTINGS ({{COUNT}} jobs):
+{{JOBS}}
+
+For each job, provide:
+- fit_score: 0-100 integer (0 = no fit, 100 = perfect fit)
+- strengths: 2-3 specific matches between resume and JD
+- gaps: 1-2 areas where the candidate falls short
+- summary: 1-2 sentence recommendation (apply/skip/maybe and why)
+
+Return ONLY valid JSON matching this structure:
+{
+  "scores": [
+    {
+      "job_index": 1,
+      "fit_score": 75,
+      "strengths": ["10+ years security leadership matches requirement", "CISSP certification listed"],
+      "gaps": ["No cloud migration experience mentioned"],
+      "summary": "Strong fit for the security leadership aspects. Apply - the cloud gap is addressable."
+    }
+  ]
+}

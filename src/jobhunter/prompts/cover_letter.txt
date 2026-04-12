@@ -1,0 +1,28 @@
+TASK: Write a cover letter for the position below.
+
+RESUME:
+{{RESUME}}
+
+POSITION: {{POSITION}}
+COMPANY: {{COMPANY}}
+LOCATION: {{LOCATION}}
+
+JOB DESCRIPTION:
+{{JD}}
+
+FIT ANALYSIS:
+{{FIT_ANALYSIS}}
+
+SELECTED RESUME BULLETS (most relevant experience):
+{{SELECTED_BULLETS}}
+
+STYLE RULES:
+{{STYLE_RULES}}
+
+INSTRUCTIONS:
+- Only promote matches between resume and JD, never mention weaknesses or gaps
+- Open with a specific hook referencing the company or role, not a generic opener
+- Pull concrete metrics and achievements from the resume that match the role
+- 3-4 paragraphs, under one page
+- Direct, executive tone
+- Output ONLY the letter text, starting with "Dear". No preamble, no markdown, no sign-off placeholders
