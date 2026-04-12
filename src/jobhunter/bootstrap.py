@@ -34,7 +34,10 @@ APP_DIR = Path.home() / ".jobhunter"
 DATA_DIR = APP_DIR / "data"
 MODELS_DIR = APP_DIR / "models"
 CONFIG_PATH = APP_DIR / "config.json"
-DEFAULT_CONFIG = Path(__file__).parent / "src" / "jobhunter" / "default_config.json"
+
+# bootstrap.py lives at src/jobhunter/bootstrap.py -- repo root is two levels up
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_CONFIG = Path(__file__).parent / "default_config.json"
 TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 BGE_MODEL = "BAAI/bge-base-en-v1.5"
 
@@ -162,7 +165,7 @@ def install_torch_cpu() -> bool:
 
 def install_requirements() -> bool:
     """Step 3: Install project dependencies."""
-    req_file = Path(__file__).parent / "requirements.txt"
+    req_file = _REPO_ROOT / "requirements.txt"
     if not req_file.exists():
         print("  ERROR: requirements.txt not found")
         return False
@@ -178,7 +181,7 @@ def install_requirements() -> bool:
     print("  Installing jobhunter package...")
     result = _run([
         sys.executable, "-m", "pip", "install", "--quiet", "-e",
-        str(Path(__file__).parent)
+        str(_REPO_ROOT)
     ])
     return result.returncode == 0
 
