@@ -1,4 +1,8 @@
-"""Multi-board job scraper: Playwright for LinkedIn, requests+BS4 for others."""
+"""Multi-board job scraper: Playwright for LinkedIn, requests+BS4 for others.
+
+All scraped job descriptions are run through jd_sanitizer before being
+returned, stripping prompt injections before they ever reach the DB or LLM.
+"""
 
 from __future__ import annotations
 
@@ -123,20 +127,28 @@ class Scraper:
         return all_jobs
 
     def scrape_posting(self, url: str) -> ScrapedJob | None:
-        """Scrape a single job posting page for its details."""
+        """Scrape a single job posting page for its details.
+
+        The returned JD text is sanitized to strip prompt injections.
+        """
         board = detect_board(url)
 
         if board == "linkedin":
-            return self._scrape_linkedin_posting(url)
+            job = self._scrape_linkedin_posting(url)
+        else:
+            try:
+                resp = requests.get(url, timeout=15, headers=_HEADERS)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "lxml")
+                job = _extract_posting_metadata(soup, url, source=board)
+            except Exception:
+                log.exception("Failed to scrape posting: %s", url[:80])
+                return None
 
-        try:
-            resp = requests.get(url, timeout=15, headers=_HEADERS)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "lxml")
-            return _extract_posting_metadata(soup, url, source=board)
-        except Exception:
-            log.exception("Failed to scrape posting: %s", url[:80])
-            return None
+        if job and job.jd_text:
+            job = _sanitize_job(job)
+
+        return job
 
     # ------------------------------------------------------------------
     # Dice (requests + BS4)
@@ -425,3 +437,20 @@ def _extract_posting_metadata(
         company=company, position=title, location=location,
         url=url, jd_text=jd_text, source=source,
     )
+
+
+def _sanitize_job(job: ScrapedJob) -> ScrapedJob:
+    """Run a scraped job's description through the sanitizer."""
+    from jobhunter.core.jd_sanitizer import sanitize
+
+    context = f"{job.position} at {job.company}" if job.position else ""
+    result = sanitize(job.jd_text, job_context=context)
+
+    if result.is_suspicious:
+        log.warning(
+            "Sanitized JD for %s - %s: %s",
+            job.company, job.position, result.summary,
+        )
+
+    job.jd_text = result.clean_text
+    return job
