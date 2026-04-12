@@ -37,17 +37,18 @@ CPU-only standalone job search assistant with local LLM scoring, resume tailorin
 ```bash
 git clone https://github.com/talon-assistant/jobhunter.git
 cd jobhunter
-python setup.py
+python bootstrap.py
 ```
 
-The setup script handles everything:
+The bootstrap script handles everything:
 1. Checks Python version
 2. Installs CPU-only PyTorch
 3. Installs all dependencies
 4. Installs Playwright + Chromium
 5. Downloads the BGE embedding model (~440MB)
 6. Creates config and data directories
-7. Optionally configures your GGUF model path
+7. Optionally downloads a GGUF model (Gemma 4 26B-A4B, ~14GB)
+8. Configures the LLM model path
 
 Then launch:
 ```bash
