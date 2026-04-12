@@ -84,7 +84,15 @@ def install_torch_cpu() -> bool:
         pass
 
     print("  Installing CPU-only PyTorch (this may take a few minutes)...")
-    return _pip_install(["torch"], extra_args=["--index-url", TORCH_CPU_INDEX])
+
+    # macOS (especially Apple Silicon) should use the default PyPI torch
+    # which includes MPS acceleration. The --index-url cpu trick is for
+    # Linux/Windows where the default wheel pulls in CUDA.
+    if platform.system() == "Darwin":
+        print("  Detected macOS -- installing default PyTorch (includes MPS support)")
+        return _pip_install(["torch"])
+    else:
+        return _pip_install(["torch"], extra_args=["--index-url", TORCH_CPU_INDEX])
 
 
 def install_requirements() -> bool:

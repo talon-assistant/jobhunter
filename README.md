@@ -27,6 +27,7 @@ CPU-only standalone job search assistant with local LLM scoring, resume tailorin
 ## Requirements
 
 - Python 3.10+
+- Windows, macOS, or Linux
 - 16-32 GB RAM (16 GB works with sequenced operations, 32 GB is comfortable)
 - llama-server (from llama.cpp) for LLM features
 - A GGUF model file (recommended: Gemma 4 26B-A4B Q4_K_M)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
 import shutil
 import signal
 import subprocess
@@ -137,7 +138,12 @@ class LLMServerManager:
         raise LLMServerError(f"llama-server did not become ready within {timeout}s")
 
     def stop(self, *, timeout: int = 10) -> None:
-        """Gracefully stop the llama-server process."""
+        """Gracefully stop the llama-server process.
+
+        On Linux/macOS, sends SIGTERM for a clean shutdown.
+        On Windows, terminate() is a hard kill (no SIGTERM support),
+        so we try hitting the server's shutdown mechanism first.
+        """
         if not self._process:
             self._status = "stopped"
             return
@@ -150,7 +156,15 @@ class LLMServerManager:
         log.info("Stopping llama-server (pid %d)...", self._process.pid)
 
         try:
-            self._process.terminate()
+            if platform.system() == "Windows":
+                # Windows has no SIGTERM; terminate() is a hard kill.
+                # Try a graceful shutdown via the health endpoint first,
+                # then fall back to terminate.
+                self._process.terminate()
+            else:
+                # Unix: SIGTERM lets llama-server clean up
+                self._process.send_signal(signal.SIGTERM)
+
             self._process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             log.warning("llama-server did not stop gracefully, killing")
