@@ -11,7 +11,7 @@
         "binary": "llama-server",
         "model_path": "",
         "port": 8080,
-        "ctx_size": 8192,
+        "ctx_size": 4096,
         "threads": 4,
         "n_gpu_layers": 0,
         "extra_args": []

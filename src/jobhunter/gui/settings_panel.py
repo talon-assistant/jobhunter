@@ -41,9 +41,14 @@ class SettingsTab:
             )
             dpg.add_input_int(
                 tag="cfg_ctx_size", label="Context Size",
-                default_value=self.config.get("llm_server.ctx_size", 8192),
-                width=100,
+                default_value=self.config.get("llm_server.ctx_size", 4096),
+                width=100, callback=self._on_ctx_size_change,
             )
+            dpg.add_text(
+                "4096 is sufficient for all tasks. Higher values use more RAM.",
+                color=(158, 158, 158),
+            )
+            dpg.add_text("", tag="ram_estimate", color=(255, 213, 79))
             dpg.add_input_int(
                 tag="cfg_threads", label="Threads",
                 default_value=self.config.get("llm_server.threads", 4),
@@ -139,6 +144,19 @@ class SettingsTab:
         self.llm.health_endpoint = f"http://localhost:{port}/health"
 
         layout.set_status("Settings saved")
+
+    def _on_ctx_size_change(self, sender=None, app_data=None, user_data=None) -> None:
+        """Show RAM estimate when context size changes."""
+        ctx = app_data if app_data else 4096
+        # Rough estimate: model ~16GB + KV cache scales ~0.05GB per 1K context for MoE
+        model_gb = 16.0
+        kv_gb = (ctx / 1024) * 0.05
+        total_gb = model_gb + kv_gb + 3.5  # OS + Python + BGE
+        if dpg.does_item_exist("ram_estimate"):
+            dpg.set_value(
+                "ram_estimate",
+                f"Estimated RAM: ~{total_gb:.1f} GB (model 16GB + context {kv_gb:.1f}GB + system 3.5GB)"
+            )
 
     def _on_start_server(self, sender=None, app_data=None, user_data=None) -> None:
         self._on_save()  # Save first to pick up any changes
