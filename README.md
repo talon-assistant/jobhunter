@@ -37,7 +37,7 @@ CPU-only standalone job search assistant with local LLM scoring, resume tailorin
 ```bash
 git clone https://github.com/talon-assistant/jobhunter.git
 cd jobhunter
-python bootstrap.py
+python setup.py
 ```
 
 The bootstrap script handles everything:

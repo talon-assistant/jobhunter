@@ -3,7 +3,7 @@
 JobHunter Bootstrap Script
 
 Run this once after cloning the repo:
-    python bootstrap.py
+    python setup.py
 
 It will:
   1. Check Python version (3.10+ required)
@@ -400,7 +400,7 @@ def main() -> int:
     for step_num, msg, func in steps:
         _print_step(step_num, total, msg)
         if not func():
-            print(f"\n  FAILED at step {step_num}. Fix the issue and re-run bootstrap.py.\n")
+            print(f"\n  FAILED at step {step_num}. Fix the issue and re-run setup.py.\n")
             failed = True
             break
 
