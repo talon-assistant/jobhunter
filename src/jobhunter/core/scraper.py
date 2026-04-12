@@ -69,10 +69,16 @@ class Scraper:
         linkedin_profile_dir: str = "",
         scrape_delay: float = 4.0,
         enabled_boards: list[str] | None = None,
+        vault_dir: str = "",
     ) -> None:
         self.linkedin_profile_dir = linkedin_profile_dir
         self.scrape_delay = scrape_delay
         self.enabled_boards = enabled_boards or ["linkedin", "dice", "builtin", "glassdoor"]
+
+        # Profile vault for encrypted LinkedIn session storage
+        from jobhunter.core.profile_vault import ProfileVault
+        vdir = vault_dir or str(Path.home() / ".jobhunter")
+        self._vault = ProfileVault(vdir)
 
     def scrape_url(self, url: str) -> list[ScrapedJob]:
         """Scrape a single URL and return job listings."""
@@ -262,8 +268,13 @@ class Scraper:
 
         self._playwright = sync_playwright().start()
 
-        profile_dir = self.linkedin_profile_dir
-        if not profile_dir:
+        # Decrypt the LinkedIn profile from the vault (or use a fresh dir)
+        if self._vault.is_available:
+            profile_dir = str(self._vault.unlock())
+            log.info("Using encrypted profile vault")
+        elif self.linkedin_profile_dir:
+            profile_dir = self.linkedin_profile_dir
+        else:
             profile_dir = str(Path.home() / ".jobhunter" / "linkedin_profile")
             Path(profile_dir).mkdir(parents=True, exist_ok=True)
 
@@ -282,7 +293,7 @@ class Scraper:
         return self._browser
 
     def _close_playwright(self) -> None:
-        """Close Playwright browser to free RAM."""
+        """Close Playwright browser and re-encrypt profile to vault."""
         if self._browser:
             try:
                 self._browser.close()
@@ -295,6 +306,13 @@ class Scraper:
             except Exception:
                 pass
             self._playwright = None
+
+        # Re-encrypt the profile back to the vault
+        if self._vault.is_available:
+            try:
+                self._vault.lock()
+            except Exception:
+                log.exception("Failed to re-encrypt LinkedIn profile")
 
     def _scrape_linkedin(self, url: str) -> list[ScrapedJob]:
         """Scrape LinkedIn job search results."""
