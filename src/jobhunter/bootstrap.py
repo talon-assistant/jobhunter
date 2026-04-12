@@ -265,35 +265,35 @@ def install_llama_server() -> bool:
         print("    https://github.com/ggml-org/llama.cpp/releases")
         return True  # Non-fatal
 
-    # Extract
+    # Extract everything -- llama-server needs companion DLLs/dylibs
+    # (ggml-base.dll, ggml-cpu.dll, llama.dll, etc.)
     print("  Extracting...")
     import zipfile
     try:
         with zipfile.ZipFile(str(zip_path), "r") as zf:
-            # Find llama-server binary in the archive
-            server_names = ["llama-server", "llama-server.exe"]
-            extracted = False
+            # Extract all files, flattening any subdirectory into BIN_DIR
             for member in zf.namelist():
+                # Skip directories
+                if member.endswith("/"):
+                    continue
                 basename = Path(member).name
-                if basename in server_names:
-                    # Extract just this file to BIN_DIR
-                    data = zf.read(member)
-                    dest = BIN_DIR / basename
-                    dest.write_bytes(data)
-                    if system != "Windows":
-                        dest.chmod(0o755)
-                    extracted = True
-                    print(f"  Installed: {dest}")
+                if not basename:
+                    continue
+                data = zf.read(member)
+                dest = BIN_DIR / basename
+                dest.write_bytes(data)
 
-            if not extracted:
-                # Fallback: extract everything
-                zf.extractall(str(BIN_DIR))
-                print(f"  Extracted all files to {BIN_DIR}")
+            # Set executable permissions on Unix
+            if system != "Windows":
+                for f in BIN_DIR.iterdir():
+                    if f.is_file() and not f.suffix:
+                        f.chmod(0o755)
+
+            print(f"  Extracted {len(zf.namelist())} files to {BIN_DIR}")
     except Exception as exc:
         print(f"  WARNING: Failed to extract: {exc}")
         return True  # Non-fatal
     finally:
-        # Clean up zip
         try:
             zip_path.unlink()
         except Exception:
