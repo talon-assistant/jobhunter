@@ -510,17 +510,13 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def main() -> int:
     _print_header("JobHunter Setup")
 
-    total = 9
+    total = 5
     steps = [
         (1, "Checking Python version...", check_python),
         (2, "Installing CPU-only PyTorch...", install_torch_cpu),
         (3, "Installing project dependencies...", install_requirements),
         (4, "Setting up Playwright + Chromium...", install_playwright),
-        (5, "Installing llama-server...", install_llama_server),
-        (6, "Downloading embedding model...", download_embedding_model),
-        (7, "Creating config and directories...", setup_config_and_dirs),
-        (8, "Downloading LLM model (optional)...", download_gguf_model),
-        (9, "Configuring LLM server...", configure_llm),
+        (5, "Downloading embedding model...", download_embedding_model),
     ]
 
     failed = False
@@ -536,15 +532,15 @@ def main() -> int:
         print("  To start JobHunter:")
         print(f"    python -m jobhunter")
         print()
-        print("  Config:  {CONFIG_PATH}")
+        print(f"  Config:  {CONFIG_PATH}")
         print(f"  Data:    {DATA_DIR}")
-        print(f"  Models:  {MODELS_DIR}")
         print()
-        print("  Next steps:")
-        print("    1. Launch the app:  python -m jobhunter")
-        print("    2. Go to Settings tab to fine-tune LLM server settings")
-        print("    3. Go to Search URLs tab to add job board search URLs")
-        print("    4. Go to Resume Library tab to import your resumes")
+        print("  On first launch, a setup wizard will walk you through:")
+        print("    - Choosing your AI provider (Claude, OpenAI, Gemini)")
+        print("    - Entering your contact info")
+        print("    - Importing your resumes")
+        print("    - Logging into LinkedIn")
+        print("    - Setting up your first job search")
         print()
         return 0
 

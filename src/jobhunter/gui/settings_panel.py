@@ -1,205 +1,230 @@
-"""Settings tab: LLM config, resume header, scraping prefs."""
+"""Settings tab (PySide6) — all config via GUI."""
 
 from __future__ import annotations
 
-import dearpygui.dearpygui as dpg
+import shutil
+
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QComboBox, QGroupBox, QFormLayout, QTextEdit,
+    QSpinBox, QMessageBox,
+)
 
 from jobhunter.config import Config
 from jobhunter.core.llm_client import LLMClient
-from jobhunter.core.llm_server import LLMServerManager
-from jobhunter.gui import dialogs, layout
 
 
-class SettingsTab:
-    """Application settings panel."""
-
+class SettingsTab(QWidget):
     def __init__(
         self,
         config: Config,
-        llm_server: LLMServerManager,
         llm_client: LLMClient,
+        *,
+        status_callback=None,
+        on_provider_change=None,
     ) -> None:
+        super().__init__()
         self.config = config
-        self.server = llm_server
         self.llm = llm_client
+        self._status_cb = status_callback
+        self._on_provider_change = on_provider_change
+        self._build_ui()
 
-    def build(self) -> None:
-        dpg.add_text("Settings", color=(137, 180, 250))
-        dpg.add_separator()
+    def _set_status(self, msg: str) -> None:
+        if self._status_cb:
+            self._status_cb(msg)
 
-        # -- LLM Server --
-        with dpg.collapsing_header(label="LLM Server", default_open=True):
-            dpg.add_input_text(
-                tag="cfg_model_path", label="Model Path (GGUF)",
-                default_value=self.config.get("llm_server.model_path", ""),
-                width=500,
-            )
-            dpg.add_input_int(
-                tag="cfg_port", label="Port",
-                default_value=self.config.get("llm_server.port", 8080),
-                width=100,
-            )
-            dpg.add_input_int(
-                tag="cfg_ctx_size", label="Context Size",
-                default_value=self.config.get("llm_server.ctx_size", 4096),
-                width=100, callback=self._on_ctx_size_change,
-            )
-            dpg.add_text(
-                "4096 is sufficient for all tasks. Higher values use more RAM.",
-                color=(158, 158, 158),
-            )
-            dpg.add_text("", tag="ram_estimate", color=(255, 213, 79))
-            dpg.add_input_int(
-                tag="cfg_threads", label="Threads",
-                default_value=self.config.get("llm_server.threads", 4),
-                width=100,
-            )
-            dpg.add_spacer(height=5)
-            with dpg.group(horizontal=True):
-                dpg.add_button(label="Start Server", callback=self._on_start_server, width=100)
-                dpg.add_button(label="Stop Server", callback=self._on_stop_server, width=100)
-                dpg.add_button(label="Check Health", callback=self._on_check_health, width=100)
-                dpg.add_spacer(width=10)
-                dpg.add_text("--", tag="server_status_text", color=(158, 158, 158))
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
 
-        dpg.add_spacer(height=10)
+        heading = QLabel("Settings")
+        heading.setProperty("heading", True)
+        layout.addWidget(heading)
+
+        # -- LLM Provider --
+        llm_group = QGroupBox("LLM Provider")
+        llm_layout = QFormLayout(llm_group)
+
+        self._provider_combo = QComboBox()
+        self._provider_combo.addItems(LLMClient.PROVIDERS)
+        self._provider_combo.setCurrentText(self.config.get("llm.provider", "claude-cli"))
+        self._provider_combo.currentTextChanged.connect(self._on_provider_ui_change)
+        llm_layout.addRow("Provider:", self._provider_combo)
+
+        self._api_key_input = QLineEdit()
+        self._api_key_input.setPlaceholderText("API key (stored in OS keyring)")
+        self._api_key_input.setEchoMode(QLineEdit.Password)
+        llm_layout.addRow("API Key:", self._api_key_input)
+
+        self._model_input = QLineEdit()
+        self._model_input.setPlaceholderText("Model name (leave blank for default)")
+        self._model_input.setText(self.config.get("llm.model", ""))
+        llm_layout.addRow("Model:", self._model_input)
+
+        self._endpoint_input = QLineEdit()
+        self._endpoint_input.setPlaceholderText("Only for openai-compatible")
+        self._endpoint_input.setText(self.config.get("llm.endpoint", ""))
+        llm_layout.addRow("Endpoint:", self._endpoint_input)
+
+        test_row = QHBoxLayout()
+        btn_test = QPushButton("Test Connection")
+        btn_test.clicked.connect(self._on_test_connection)
+        test_row.addWidget(btn_test)
+        self._test_result = QLabel("")
+        test_row.addWidget(self._test_result)
+        test_row.addStretch()
+        llm_layout.addRow("", test_row)
+
+        # Load API key from keyring
+        self._load_api_key()
+        self._on_provider_ui_change(self._provider_combo.currentText())
+
+        layout.addWidget(llm_group)
 
         # -- Resume Header --
-        with dpg.collapsing_header(label="Resume Header", default_open=True):
-            dpg.add_input_text(
-                tag="cfg_name", label="Name",
-                default_value=self.config.get("resume.name", ""), width=300,
-            )
-            dpg.add_input_text(
-                tag="cfg_email", label="Email",
-                default_value=self.config.get("resume.email", ""), width=300,
-            )
-            dpg.add_input_text(
-                tag="cfg_phone", label="Phone",
-                default_value=self.config.get("resume.phone", ""), width=300,
-            )
-            dpg.add_input_text(
-                tag="cfg_location", label="Location",
-                default_value=self.config.get("resume.location", ""), width=300,
-            )
-            dpg.add_input_text(
-                tag="cfg_output_dir", label="Output Directory",
-                default_value=self.config.get("resume.output_dir", ""), width=500,
-            )
+        resume_group = QGroupBox("Resume Header")
+        resume_layout = QFormLayout(resume_group)
 
-        dpg.add_spacer(height=10)
+        self._name = QLineEdit(self.config.get("resume.name", ""))
+        resume_layout.addRow("Name:", self._name)
+        self._email = QLineEdit(self.config.get("resume.email", ""))
+        resume_layout.addRow("Email:", self._email)
+        self._phone = QLineEdit(self.config.get("resume.phone", ""))
+        resume_layout.addRow("Phone:", self._phone)
+        self._location = QLineEdit(self.config.get("resume.location", ""))
+        resume_layout.addRow("Location:", self._location)
+        self._output_dir = QLineEdit(self.config.get("resume.output_dir", ""))
+        self._output_dir.setPlaceholderText("Output directory for generated documents")
+        resume_layout.addRow("Output Dir:", self._output_dir)
+
+        layout.addWidget(resume_group)
 
         # -- Cover Letter Style --
-        with dpg.collapsing_header(label="Cover Letter Style"):
-            dpg.add_input_text(
-                tag="cfg_style_rules", label="Style Rules",
-                default_value=self.config.get("resume.style_rules", ""),
-                multiline=True, height=80, width=-1,
-            )
-
-        dpg.add_spacer(height=10)
+        style_group = QGroupBox("Cover Letter Style Rules")
+        style_layout = QVBoxLayout(style_group)
+        self._style_rules = QTextEdit()
+        self._style_rules.setPlainText(self.config.get("resume.style_rules", ""))
+        self._style_rules.setMaximumHeight(80)
+        style_layout.addWidget(self._style_rules)
+        layout.addWidget(style_group)
 
         # -- Scoring --
-        with dpg.collapsing_header(label="Scoring"):
-            dpg.add_input_int(
-                tag="cfg_deep_threshold", label="Deep Analysis Threshold",
-                default_value=self.config.get("scoring.deep_threshold", 50),
-                width=100,
+        score_group = QGroupBox("Scoring")
+        score_layout = QFormLayout(score_group)
+
+        self._deep_threshold = QSpinBox()
+        self._deep_threshold.setRange(0, 100)
+        self._deep_threshold.setValue(self.config.get("scoring.deep_threshold", 50))
+        score_layout.addRow("Deep Analysis Threshold:", self._deep_threshold)
+
+        self._auto_archive = QSpinBox()
+        self._auto_archive.setRange(0, 100)
+        self._auto_archive.setValue(self.config.get("scoring.auto_archive_below", 30))
+        score_layout.addRow("Auto-archive Below:", self._auto_archive)
+
+        layout.addWidget(score_group)
+
+        # -- Save --
+        btn_save = QPushButton("Save Settings")
+        btn_save.setProperty("primary", True)
+        btn_save.clicked.connect(self._on_save)
+        layout.addWidget(btn_save)
+
+        layout.addStretch()
+
+    def _on_provider_ui_change(self, provider: str) -> None:
+        """Show/hide fields based on provider."""
+        needs_key = provider in ("anthropic", "openai", "gemini")
+        needs_endpoint = provider == "openai-compatible"
+
+        self._api_key_input.setVisible(needs_key or needs_endpoint)
+        self._endpoint_input.setVisible(needs_endpoint)
+
+        # Show CLI status for claude-cli
+        if provider == "claude-cli":
+            has_cli = shutil.which("claude") is not None
+            self._test_result.setText("✓ Claude CLI found" if has_cli else "✗ Claude CLI not found")
+            self._test_result.setStyleSheet(
+                "color: #81c784;" if has_cli else "color: #ef5350;"
             )
-            dpg.add_input_int(
-                tag="cfg_auto_archive", label="Auto-archive Below",
-                default_value=self.config.get("scoring.auto_archive_below", 30),
-                width=100,
+
+    def _on_test_connection(self) -> None:
+        provider = self._provider_combo.currentText()
+        api_key = self._api_key_input.text().strip()
+        model = self._model_input.text().strip()
+        endpoint = self._endpoint_input.text().strip()
+
+        test_client = LLMClient(
+            provider=provider, api_key=api_key,
+            model=model, endpoint=endpoint,
+        )
+
+        try:
+            result = test_client.generate_text(
+                "Reply with exactly: OK",
+                system_prompt="Reply with exactly one word: OK",
+                max_tokens=10,
             )
+            self._test_result.setText(f"✓ Connected ({provider})")
+            self._test_result.setStyleSheet("color: #81c784;")
+        except Exception as exc:
+            self._test_result.setText(f"✗ {exc}")
+            self._test_result.setStyleSheet("color: #ef5350;")
 
-        dpg.add_spacer(height=10)
-
-        # Save button
-        dpg.add_button(label="Save Settings", callback=self._on_save, width=120)
-
-    def _on_save(self, sender=None, app_data=None, user_data=None) -> None:
-        self.config.set("llm_server.model_path", dpg.get_value("cfg_model_path"))
-        self.config.set("llm_server.port", dpg.get_value("cfg_port"))
-        self.config.set("llm_server.ctx_size", dpg.get_value("cfg_ctx_size"))
-        self.config.set("llm_server.threads", dpg.get_value("cfg_threads"))
-        self.config.set("resume.name", dpg.get_value("cfg_name"))
-        self.config.set("resume.email", dpg.get_value("cfg_email"))
-        self.config.set("resume.phone", dpg.get_value("cfg_phone"))
-        self.config.set("resume.location", dpg.get_value("cfg_location"))
-        self.config.set("resume.output_dir", dpg.get_value("cfg_output_dir"))
-        self.config.set("resume.style_rules", dpg.get_value("cfg_style_rules"))
-        self.config.set("scoring.deep_threshold", dpg.get_value("cfg_deep_threshold"))
-        self.config.set("scoring.auto_archive_below", dpg.get_value("cfg_auto_archive"))
+    def _on_save(self) -> None:
+        provider = self._provider_combo.currentText()
+        self.config.set("llm.provider", provider)
+        self.config.set("llm.model", self._model_input.text().strip())
+        self.config.set("llm.endpoint", self._endpoint_input.text().strip())
+        self.config.set("resume.name", self._name.text())
+        self.config.set("resume.email", self._email.text())
+        self.config.set("resume.phone", self._phone.text())
+        self.config.set("resume.location", self._location.text())
+        self.config.set("resume.output_dir", self._output_dir.text())
+        self.config.set("resume.style_rules", self._style_rules.toPlainText())
+        self.config.set("scoring.deep_threshold", self._deep_threshold.value())
+        self.config.set("scoring.auto_archive_below", self._auto_archive.value())
         self.config.save()
 
-        # Update server config
-        self.server.model_path = self.config.get("llm_server.model_path", "")
-        self.server.port = self.config.get("llm_server.port", 8080)
-        self.server.ctx_size = self.config.get("llm_server.ctx_size", 8192)
-        self.server.threads = self.config.get("llm_server.threads", 4)
+        # Save API key to OS keyring
+        api_key = self._api_key_input.text().strip()
+        if api_key:
+            self._save_api_key(provider, api_key)
 
-        # Update LLM client endpoint
-        port = self.config.get("llm_server.port", 8080)
-        self.llm.endpoint = f"http://localhost:{port}/v1/chat/completions"
-        self.llm.health_endpoint = f"http://localhost:{port}/health"
+        # Update the live LLM client
+        self.llm.provider = provider
+        self.llm.api_key = api_key or self._load_api_key_value(provider)
+        self.llm.model = self._model_input.text().strip() or LLMClient._default_model(provider)
+        self.llm.endpoint = self._endpoint_input.text().strip()
 
-        layout.set_status("Settings saved")
+        if self._on_provider_change:
+            self._on_provider_change()
 
-    def _on_ctx_size_change(self, sender=None, app_data=None, user_data=None) -> None:
-        """Show RAM estimate when context size changes."""
-        ctx = app_data if app_data else 4096
-        # Rough estimate: model ~16GB + KV cache scales ~0.05GB per 1K context for MoE
-        model_gb = 16.0
-        kv_gb = (ctx / 1024) * 0.05
-        total_gb = model_gb + kv_gb + 3.5  # OS + Python + BGE
-        if dpg.does_item_exist("ram_estimate"):
-            dpg.set_value(
-                "ram_estimate",
-                f"Estimated RAM: ~{total_gb:.1f} GB (model 16GB + context {kv_gb:.1f}GB + system 3.5GB)"
-            )
+        self._set_status("Settings saved")
 
-    def _on_start_server(self, sender=None, app_data=None, user_data=None) -> None:
-        self._on_save()  # Save first to pick up any changes
+    # ------------------------------------------------------------------
+    # Keyring helpers
+    # ------------------------------------------------------------------
 
-        if dpg.does_item_exist("server_status_text"):
-            dpg.set_value("server_status_text", "Starting...")
+    def _load_api_key(self) -> None:
+        provider = self._provider_combo.currentText()
+        key = self._load_api_key_value(provider)
+        if key:
+            self._api_key_input.setText(key)
 
-        from jobhunter.gui.workers import BackgroundTask
+    @staticmethod
+    def _load_api_key_value(provider: str) -> str:
+        try:
+            import keyring
+            return keyring.get_password("jobhunter", f"api_key_{provider}") or ""
+        except Exception:
+            return ""
 
-        def do_start():
-            self.server.start(timeout=180)
-
-        def on_done(_):
-            layout.set_llm_status("Running", ok=True)
-            if dpg.does_item_exist("server_status_text"):
-                dpg.set_value("server_status_text", "Running")
-                dpg.configure_item("server_status_text", color=(129, 199, 132))
-
-        def on_error(exc):
-            layout.set_llm_status("Error", ok=False)
-            if dpg.does_item_exist("server_status_text"):
-                dpg.set_value("server_status_text", f"Error: {exc}")
-                dpg.configure_item("server_status_text", color=(239, 83, 80))
-            dialogs.error_dialog("Server Error", str(exc))
-
-        BackgroundTask(do_start, on_complete=on_done, on_error=on_error).start()
-
-    def _on_stop_server(self, sender=None, app_data=None, user_data=None) -> None:
-        self.server.stop()
-        layout.set_llm_status("Stopped", ok=False)
-        if dpg.does_item_exist("server_status_text"):
-            dpg.set_value("server_status_text", "Stopped")
-            dpg.configure_item("server_status_text", color=(158, 158, 158))
-
-    def _on_check_health(self, sender=None, app_data=None, user_data=None) -> None:
-        healthy = self.llm.is_healthy()
-        if healthy:
-            layout.set_llm_status("Running", ok=True)
-            if dpg.does_item_exist("server_status_text"):
-                dpg.set_value("server_status_text", "Healthy")
-                dpg.configure_item("server_status_text", color=(129, 199, 132))
-        else:
-            layout.set_llm_status("Not responding", ok=False)
-            if dpg.does_item_exist("server_status_text"):
-                dpg.set_value("server_status_text", "Not responding")
-                dpg.configure_item("server_status_text", color=(239, 83, 80))
+    @staticmethod
+    def _save_api_key(provider: str, key: str) -> None:
+        try:
+            import keyring
+            keyring.set_password("jobhunter", f"api_key_{provider}", key)
+        except Exception:
+            pass  # Keyring unavailable, key stays in memory only

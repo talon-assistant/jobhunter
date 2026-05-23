@@ -1,4 +1,4 @@
-"""Application bootstrap: create services, build GUI, run event loop."""
+"""Application bootstrap: create services, build PySide6 GUI, run event loop."""
 
 from __future__ import annotations
 
@@ -6,169 +6,288 @@ import logging
 import sys
 from pathlib import Path
 
-import dearpygui.dearpygui as dpg
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QStatusBar
+from PySide6.QtCore import Qt
 
 from jobhunter.config import Config
 
 log = logging.getLogger(__name__)
 
 
+class MainWindow(QMainWindow):
+    """Main application window with tabbed interface."""
+
+    def __init__(self, config: Config) -> None:
+        super().__init__()
+        self.config = config
+        self.setWindowTitle("JobHunter")
+        self.setMinimumSize(1200, 800)
+        self.resize(1400, 900)
+
+        # -- Status bar --
+        self._status_bar = QStatusBar()
+        self.setStatusBar(self._status_bar)
+        self._status_bar.showMessage("Ready")
+
+        # -- Build services --
+        self._build_services()
+
+        # -- Tab widget --
+        self._tabs = QTabWidget()
+        self.setCentralWidget(self._tabs)
+
+        self._build_tabs()
+
+    def _status(self, msg: str) -> None:
+        self._status_bar.showMessage(msg, 5000)
+
+    def _build_services(self) -> None:
+        from jobhunter.core.job_db import JobDB
+        from jobhunter.core.resume_db import ResumeDB
+        from jobhunter.core.llm_client import LLMClient
+        from jobhunter.core.fit_scorer import FitScorer
+        from jobhunter.core.resume_selector import ResumeSelector
+        from jobhunter.core.cover_letter import CoverLetterGenerator
+        from jobhunter.core.scraper import Scraper
+
+        app_dir = self.config.path.parent
+        data_dir = app_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        # DB paths
+        job_db_path = self.config.get("data.job_db_path", "data/jobhunter.db")
+        if not Path(job_db_path).is_absolute():
+            job_db_path = str(app_dir / job_db_path)
+        resume_db_path = self.config.get("data.resume_db_path", "data/resume_library.db")
+        if not Path(resume_db_path).is_absolute():
+            resume_db_path = str(app_dir / resume_db_path)
+
+        self.job_db = JobDB(job_db_path)
+        self.resume_db = ResumeDB(resume_db_path)
+
+        # LLM client
+        provider = self.config.get("llm.provider", "claude-cli")
+        api_key = self._load_api_key(provider)
+        self.llm_client = LLMClient(
+            provider=provider,
+            api_key=api_key,
+            model=self.config.get("llm.model", ""),
+            endpoint=self.config.get("llm.endpoint", ""),
+            temperature=self.config.get("llm.temperature", 0.3),
+            max_tokens=self.config.get("llm.max_tokens", 4096),
+            timeout=self.config.get("llm.timeout", 300),
+        )
+
+        self.scraper = Scraper(
+            linkedin_profile_dir=self.config.get("scraping.linkedin_profile_dir", ""),
+            scrape_delay=self.config.get("scraping.scrape_delay", 4),
+            enabled_boards=self.config.get("scraping.enabled_boards", []),
+        )
+
+        self.fit_scorer = FitScorer(
+            self.llm_client,
+            fast_threshold=self.config.get("scoring.fast_threshold", 40),
+            deep_threshold=self.config.get("scoring.deep_threshold", 50),
+            batch_size=self.config.get("scoring.batch_size", 2),
+            jd_max_chars=self.config.get("scoring.jd_max_chars", 1500),
+            auto_archive_below=self.config.get("scoring.auto_archive_below", 30),
+        )
+
+        self.resume_selector = ResumeSelector(self.llm_client, self.resume_db)
+        self.cover_letter_gen = CoverLetterGenerator(
+            self.llm_client,
+            style_rules=self.config.get("resume.style_rules", ""),
+        )
+
+        # Resume text
+        library_md = self.config.get("data.library_md_path", "data/resumelibrary.md")
+        if not Path(library_md).is_absolute():
+            library_md = str(app_dir / library_md)
+        self.resume_text = ""
+        if Path(library_md).exists():
+            self.resume_text = Path(library_md).read_text(encoding="utf-8")
+
+        self.resume_header = {
+            "name": self.config.get("resume.name", ""),
+            "email": self.config.get("resume.email", ""),
+            "phone": self.config.get("resume.phone", ""),
+            "location": self.config.get("resume.location", ""),
+        }
+
+    def _build_tabs(self) -> None:
+        from jobhunter.gui.dashboard import DashboardTab
+        from jobhunter.gui.resume_library import ResumeLibraryTab
+        from jobhunter.gui.search_urls import SearchURLsTab
+        from jobhunter.gui.followups import FollowupsTab
+        from jobhunter.gui.settings_panel import SettingsTab
+
+        dashboard = DashboardTab(
+            self.job_db, self.resume_db, self.scraper,
+            self.fit_scorer, self.resume_selector, self.cover_letter_gen,
+            resume_text=self.resume_text,
+            output_dir=self.config.get("resume.output_dir", ""),
+            resume_header=self.resume_header,
+            status_callback=self._status,
+        )
+        self._tabs.addTab(dashboard, "Dashboard")
+
+        resume_lib = ResumeLibraryTab(
+            self.resume_db, self.llm_client,
+            status_callback=self._status,
+        )
+        self._tabs.addTab(resume_lib, "Resume Library")
+
+        search_urls = SearchURLsTab(self.job_db, status_callback=self._status)
+        self._tabs.addTab(search_urls, "Search URLs")
+
+        followups = FollowupsTab(self.job_db, status_callback=self._status)
+        self._tabs.addTab(followups, "Follow-ups")
+
+        settings = SettingsTab(
+            self.config, self.llm_client,
+            status_callback=self._status,
+        )
+        self._tabs.addTab(settings, "Settings")
+
+    @staticmethod
+    def _load_api_key(provider: str) -> str:
+        try:
+            import keyring
+            return keyring.get_password("jobhunter", f"api_key_{provider}") or ""
+        except Exception:
+            return ""
+
+    def closeEvent(self, event) -> None:
+        self.job_db.close()
+        self.resume_db.close()
+        event.accept()
+
+
 def main() -> None:
     """Entry point for the JobHunter application."""
-    # -- Logging --
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
 
-    # -- Config --
     config = Config()
     log.info("Config loaded from %s", config.path)
 
-    # -- Data directories --
-    app_dir = config.path.parent
-    data_dir = app_dir / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
+    app = QApplication(sys.argv)
 
-    # -- Core services --
+    # Apply dark theme
+    from jobhunter.gui.theme import DARK_STYLESHEET
+    app.setStyleSheet(DARK_STYLESHEET)
+
+    # First-run wizard
+    if not config.get("setup_complete", False):
+        from jobhunter.gui.wizard import SetupWizard
+        wizard = SetupWizard(config)
+        result = wizard.exec()
+        if result == wizard.Accepted:
+            # Process wizard results
+            _process_wizard_results(config, wizard)
+            config.set("setup_complete", True)
+            config.save()
+        else:
+            # User cancelled wizard — still launch app but note incomplete setup
+            log.info("Wizard cancelled, launching with defaults")
+
+    # Main window
+    window = MainWindow(config)
+    window.show()
+
+    sys.exit(app.exec())
+
+
+def _process_wizard_results(config: Config, wizard) -> None:
+    """Process results from the setup wizard after it completes."""
     from jobhunter.core.job_db import JobDB
     from jobhunter.core.resume_db import ResumeDB
-    from jobhunter.core.llm_client import LLMClient
-    from jobhunter.core.llm_server import LLMServerManager
-    from jobhunter.core.fit_scorer import FitScorer
-    from jobhunter.core.resume_selector import ResumeSelector
-    from jobhunter.core.cover_letter import CoverLetterGenerator
-    from jobhunter.core.scraper import Scraper
+    from jobhunter.core.llm_client import LLMClient, LLMError
+    from jobhunter.core.doc_extractor import extract_text
 
-    job_db_path = config.get("data.job_db_path", "data/jobhunter.db")
-    if not Path(job_db_path).is_absolute():
-        job_db_path = str(app_dir / job_db_path)
+    app_dir = config.path.parent
 
-    resume_db_path = config.get("data.resume_db_path", "data/resume_library.db")
-    if not Path(resume_db_path).is_absolute():
-        resume_db_path = str(app_dir / resume_db_path)
+    # Add generated search URLs
+    pages = [wizard.page(i) for i in range(wizard.pageCount())]
+    for page in pages:
+        if hasattr(page, "get_generated_urls"):
+            urls = page.get_generated_urls()
+            if urls:
+                job_db_path = config.get("data.job_db_path", "data/jobhunter.db")
+                if not Path(job_db_path).is_absolute():
+                    job_db_path = str(app_dir / job_db_path)
+                db = JobDB(job_db_path)
+                for board, url in urls:
+                    db.add_search_url(board, url)
+                db.close()
 
-    job_db = JobDB(job_db_path)
-    resume_db = ResumeDB(resume_db_path)
+        # Import resume files
+        if hasattr(page, "get_files"):
+            files = page.get_files()
+            if files:
+                resume_db_path = config.get("data.resume_db_path", "data/resume_library.db")
+                if not Path(resume_db_path).is_absolute():
+                    resume_db_path = str(app_dir / resume_db_path)
+                rdb = ResumeDB(resume_db_path)
 
-    llm_server = LLMServerManager(
-        binary=config.get("llm_server.binary", "llama-server"),
-        model_path=config.get("llm_server.model_path", ""),
-        port=config.get("llm_server.port", 8080),
-        ctx_size=config.get("llm_server.ctx_size", 8192),
-        threads=config.get("llm_server.threads", 4),
-        n_gpu_layers=config.get("llm_server.n_gpu_layers", 0),
-        extra_args=config.get("llm_server.extra_args", []),
-    )
+                # Try to use LLM for extraction
+                provider = config.get("llm.provider", "claude-cli")
+                try:
+                    import keyring
+                    api_key = keyring.get_password("jobhunter", f"api_key_{provider}") or ""
+                except Exception:
+                    api_key = ""
 
-    port = config.get("llm_server.port", 8080)
-    llm_client = LLMClient(
-        endpoint=config.get("llm.endpoint", f"http://localhost:{port}/v1/chat/completions"),
-        health_endpoint=config.get("llm.health_endpoint", f"http://localhost:{port}/health"),
-        temperature=config.get("llm.temperature", 0.3),
-        max_tokens=config.get("llm.max_tokens", 2048),
-        timeout=config.get("llm.timeout", 300),
-    )
+                try:
+                    llm = LLMClient(provider=provider, api_key=api_key)
+                except Exception:
+                    llm = None
 
-    scraper = Scraper(
-        linkedin_profile_dir=config.get("scraping.linkedin_profile_dir", ""),
-        scrape_delay=config.get("scraping.scrape_delay", 4),
-        enabled_boards=config.get("scraping.enabled_boards", ["linkedin", "dice", "builtin", "glassdoor"]),
-    )
+                extract_prompt_path = Path(__file__).parent / "prompts" / "extract_bullets.txt"
+                extract_prompt = ""
+                if extract_prompt_path.exists():
+                    extract_prompt = extract_prompt_path.read_text(encoding="utf-8")
 
-    fit_scorer = FitScorer(
-        llm_client,
-        fast_threshold=config.get("scoring.fast_threshold", 40),
-        deep_threshold=config.get("scoring.deep_threshold", 50),
-        batch_size=config.get("scoring.batch_size", 2),
-        jd_max_chars=config.get("scoring.jd_max_chars", 1500),
-        auto_archive_below=config.get("scoring.auto_archive_below", 30),
-    )
+                for fpath in files:
+                    text = extract_text(fpath)
+                    if not text:
+                        continue
+                    filename = Path(fpath).name
 
-    resume_selector = ResumeSelector(llm_client, resume_db)
-    cover_letter_gen = CoverLetterGenerator(
-        llm_client,
-        style_rules=config.get("resume.style_rules", ""),
-    )
+                    if llm and extract_prompt:
+                        try:
+                            prompt = extract_prompt.replace("{{DOCUMENT}}", text[:8000])
+                            prompt = prompt.replace("{{FILENAME}}", filename)
+                            result = llm.generate_json(
+                                prompt,
+                                {"type": "object", "properties": {"roles": {"type": "array"}}},
+                                system_prompt="Extract bullets exactly as written.",
+                            )
+                            roles = result.get("roles", []) if isinstance(result, dict) else []
+                            for role in roles:
+                                section = role.get("section", "experience")
+                                role_name = role.get("role", "")
+                                for bullet in role.get("bullets", []):
+                                    bullet = bullet.strip()
+                                    if bullet and len(bullet) > 10:
+                                        dupes = rdb.find_duplicates(bullet, threshold=0.92)
+                                        if not dupes:
+                                            rdb.add_bullet(section, bullet, role=role_name, source_file=filename)
+                        except (LLMError, Exception):
+                            log.exception("LLM extraction failed for %s", filename)
+                    else:
+                        # Simple line-based fallback
+                        for line in text.splitlines():
+                            line = line.strip()
+                            if line.startswith(("- ", "* ")):
+                                bullet = line.lstrip("-* ").strip()
+                                if bullet and len(bullet) > 15:
+                                    rdb.add_bullet("experience", bullet, source_file=filename)
 
-    # Resume header info
-    resume_header = {
-        "name": config.get("resume.name", ""),
-        "email": config.get("resume.email", ""),
-        "phone": config.get("resume.phone", ""),
-        "location": config.get("resume.location", ""),
-    }
-
-    # Load resume text from library export (if it exists)
-    library_md = config.get("data.library_md_path", "data/resumelibrary.md")
-    if not Path(library_md).is_absolute():
-        library_md = str(app_dir / library_md)
-    resume_text = ""
-    if Path(library_md).exists():
-        resume_text = Path(library_md).read_text(encoding="utf-8")
-
-    # -- GUI --
-    from jobhunter.gui.dashboard import DashboardTab
-    from jobhunter.gui.resume_library import ResumeLibraryTab
-    from jobhunter.gui.search_urls import SearchURLsTab
-    from jobhunter.gui.followups import FollowupsTab
-    from jobhunter.gui.settings_panel import SettingsTab
-    from jobhunter.gui.layout import build_layout, frame_callback, PRIMARY_WINDOW
-    from jobhunter.gui.theme import apply_dark_theme
-
-    dashboard = DashboardTab(
-        job_db, resume_db, scraper, fit_scorer,
-        resume_selector, cover_letter_gen,
-        resume_text=resume_text,
-        output_dir=config.get("resume.output_dir", str(Path.home() / "Documents" / "JobHunter")),
-        resume_header=resume_header,
-    )
-    resume_library = ResumeLibraryTab(resume_db, llm_client)
-    search_urls = SearchURLsTab(job_db)
-    followups = FollowupsTab(job_db)
-    settings = SettingsTab(config, llm_server, llm_client)
-
-    # -- DearPyGui setup --
-    dpg.create_context()
-    dpg.create_viewport(
-        title="JobHunter",
-        width=1400,
-        height=900,
-        min_width=800,
-        min_height=600,
-    )
-
-    apply_dark_theme()
-
-    build_layout(
-        dashboard=dashboard,
-        resume_library=resume_library,
-        search_urls=search_urls,
-        followups=followups,
-        settings=settings,
-    )
-
-    dpg.setup_dearpygui()
-    dpg.set_primary_window(PRIMARY_WINDOW, True)
-
-    # Register frame callback for background task queue
-    dpg.set_frame_callback(1, lambda: None)  # init frame
-
-    dpg.show_viewport()
-
-    # Main loop with manual callback management
-    while dpg.is_dearpygui_running():
-        frame_callback()
-        dpg.render_dearpygui_frame()
-
-    # -- Cleanup --
-    log.info("Shutting down...")
-    llm_server.stop()
-    job_db.close()
-    resume_db.close()
-    dpg.destroy_context()
-    log.info("Goodbye.")
+                rdb.close()
 
 
 if __name__ == "__main__":

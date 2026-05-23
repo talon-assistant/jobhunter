@@ -1,113 +1,106 @@
-"""Search URL manager tab."""
+"""Search URL manager tab (PySide6)."""
 
 from __future__ import annotations
 
-import dearpygui.dearpygui as dpg
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QComboBox, QPushButton, QListWidget, QListWidgetItem,
+    QCheckBox, QMessageBox,
+)
 
 from jobhunter.core.job_db import JobDB
 from jobhunter.core.scraper import detect_board
-from jobhunter.gui import dialogs, layout
-
 
 _BOARD_CHOICES = ["linkedin", "dice", "builtin", "glassdoor", "other"]
 
 
-class SearchURLsTab:
-    """Manage configured search URLs per board."""
-
-    def __init__(self, job_db: JobDB) -> None:
+class SearchURLsTab(QWidget):
+    def __init__(self, job_db: JobDB, *, status_callback=None) -> None:
+        super().__init__()
         self.db = job_db
-
-    def build(self) -> None:
-        dpg.add_text("Manage Search URLs", color=(137, 180, 250))
-        dpg.add_separator()
-
-        # Add URL bar
-        with dpg.group(horizontal=True):
-            dpg.add_combo(
-                _BOARD_CHOICES, tag="url_board_combo",
-                default_value="linkedin", width=100,
-            )
-            dpg.add_input_text(
-                tag="url_add_input", hint="Paste search URL...", width=500,
-            )
-            dpg.add_input_text(
-                tag="url_label_input", hint="Label (optional)", width=150,
-            )
-            dpg.add_button(label="Add", callback=self._on_add, width=50)
-
-        dpg.add_spacer(height=10)
-
-        # URL list
-        with dpg.child_window(tag="url_list_container"):
-            with dpg.group(tag="url_list"):
-                pass
-
+        self._status_cb = status_callback
+        self._build_ui()
         self._refresh()
 
+    def _set_status(self, msg: str) -> None:
+        if self._status_cb:
+            self._status_cb(msg)
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        heading = QLabel("Manage Search URLs")
+        heading.setProperty("heading", True)
+        layout.addWidget(heading)
+
+        # Add URL bar
+        add_row = QHBoxLayout()
+        self._board_combo = QComboBox()
+        self._board_combo.addItems(_BOARD_CHOICES)
+        add_row.addWidget(self._board_combo)
+
+        self._url_input = QLineEdit()
+        self._url_input.setPlaceholderText("Paste search URL...")
+        self._url_input.returnPressed.connect(self._on_add)
+        add_row.addWidget(self._url_input, stretch=1)
+
+        self._label_input = QLineEdit()
+        self._label_input.setPlaceholderText("Label (optional)")
+        add_row.addWidget(self._label_input)
+
+        btn_add = QPushButton("Add")
+        btn_add.setProperty("primary", True)
+        btn_add.clicked.connect(self._on_add)
+        add_row.addWidget(btn_add)
+        layout.addLayout(add_row)
+
+        # URL list
+        self._list = QListWidget()
+        layout.addWidget(self._list)
+
     def _refresh(self) -> None:
-        if not dpg.does_item_exist("url_list"):
-            return
-
-        children = dpg.get_item_children("url_list", 1) or []
-        for child in children:
-            dpg.delete_item(child)
-
+        self._list.clear()
         urls = self.db.list_search_urls()
         if not urls:
-            dpg.add_text("No search URLs configured", parent="url_list", color=(158, 158, 158))
+            item = QListWidgetItem("No search URLs configured")
+            item.setFlags(Qt.NoItemFlags)
+            self._list.addItem(item)
             return
 
         for entry in urls:
             uid = entry["id"]
-            enabled = bool(entry.get("enabled", 1))
             board = entry.get("board", "other")
             url = entry.get("url", "")
             label = entry.get("label", "")
+            enabled = bool(entry.get("enabled", 1))
             last = entry.get("last_scraped", "never")
 
-            with dpg.group(horizontal=True, parent="url_list"):
-                dpg.add_checkbox(
-                    default_value=enabled,
-                    callback=self._on_toggle,
-                    user_data=uid,
-                )
-                dpg.add_text(f"[{board}]", color=(137, 180, 250))
-                display = label if label else (url[:80] + "..." if len(url) > 80 else url)
-                dpg.add_text(display)
-                dpg.add_text(f"(last: {last or 'never'})", color=(158, 158, 158))
-                dpg.add_button(label="Del", callback=self._on_delete, user_data=uid, width=35)
+            display = label if label else (url[:80] + "..." if len(url) > 80 else url)
+            check = "✓" if enabled else "✗"
+            text = f"  {check}  [{board}]  {display}  (last: {last or 'never'})"
 
-    def _on_add(self, sender=None, app_data=None, user_data=None) -> None:
-        url = dpg.get_value("url_add_input").strip()
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, uid)
+            self._list.addItem(item)
+
+        # Context menu would go here in a polish pass
+
+    def _on_add(self) -> None:
+        url = self._url_input.text().strip()
         if not url.startswith("http"):
-            dialogs.error_dialog("Invalid URL", "URL must start with http")
+            QMessageBox.warning(self, "Invalid URL", "URL must start with http")
             return
 
-        board = dpg.get_value("url_board_combo")
-        # Auto-detect board from URL
+        board = self._board_combo.currentText()
         detected = detect_board(url)
         if detected != "other":
             board = detected
 
-        label = dpg.get_value("url_label_input").strip()
+        label = self._label_input.text().strip()
         self.db.add_search_url(board, url, label)
-        dpg.set_value("url_add_input", "")
-        dpg.set_value("url_label_input", "")
+        self._url_input.clear()
+        self._label_input.clear()
         self._refresh()
-        layout.set_status(f"Search URL added ({board})")
-
-    def _on_toggle(self, sender, app_data, user_data) -> None:
-        self.db.toggle_search_url(user_data, app_data)
-
-    def _on_delete(self, sender, app_data, user_data) -> None:
-        dialogs.confirm_dialog(
-            "Delete URL",
-            "Remove this search URL?",
-            on_confirm=lambda: self._do_delete(user_data),
-        )
-
-    def _do_delete(self, uid: int) -> None:
-        self.db.delete_search_url(uid)
-        self._refresh()
-        layout.set_status("Search URL removed")
+        self._set_status(f"Search URL added ({board})")

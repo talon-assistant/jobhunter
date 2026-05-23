@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jobhunter"
-version = "0.1.0"
-description = "CPU-only job search assistant with local LLM scoring, resume tailoring, and cover letter generation"
+version = "0.2.0"
+description = "Job search assistant with AI scoring, resume tailoring, and cover letter generation"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 
 dependencies = [
-    "dearpygui>=2.0.0",
+    "PySide6>=6.5.0",
     "sentence-transformers>=3.0.0",
     "numpy>=1.26.0",
     "requests>=2.31.0",
@@ -26,6 +26,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
+openai = ["openai>=1.50.0"]
+gemini = ["google-generativeai>=0.8.0"]
+all-providers = ["anthropic>=0.40.0", "openai>=1.50.0", "google-generativeai>=0.8.0"]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",

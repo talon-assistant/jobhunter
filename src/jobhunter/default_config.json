@@ -1,20 +1,11 @@
 {
     "llm": {
-        "endpoint": "http://localhost:8080/v1/chat/completions",
-        "health_endpoint": "http://localhost:8080/health",
+        "provider": "claude-cli",
+        "model": "",
+        "endpoint": "",
         "temperature": 0.3,
-        "max_tokens": 2048,
+        "max_tokens": 4096,
         "timeout": 300
-    },
-    "llm_server": {
-        "mode": "manual",
-        "binary": "llama-server",
-        "model_path": "",
-        "port": 8080,
-        "ctx_size": 4096,
-        "threads": 4,
-        "n_gpu_layers": 0,
-        "extra_args": []
     },
     "scoring": {
         "fast_threshold": 40,
@@ -46,5 +37,6 @@
         "job_db_path": "data/jobhunter.db",
         "resume_db_path": "data/resume_library.db",
         "library_md_path": "data/resumelibrary.md"
-    }
+    },
+    "setup_complete": false
 }
