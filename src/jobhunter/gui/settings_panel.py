@@ -98,6 +98,18 @@ class SettingsTab(QWidget):
         self._output_dir.setPlaceholderText("Output directory for generated documents")
         resume_layout.addRow("Output Dir:", self._output_dir)
 
+        # Template selection
+        from jobhunter.templates import TEMPLATES
+        self._template_combo = QComboBox()
+        current_template = self.config.get("resume.template", "classic")
+        for key, info in TEMPLATES.items():
+            self._template_combo.addItem(f"{info['name']} — {info['description']}", key)
+        # Set current
+        idx = self._template_combo.findData(current_template)
+        if idx >= 0:
+            self._template_combo.setCurrentIndex(idx)
+        resume_layout.addRow("Template:", self._template_combo)
+
         layout.addWidget(resume_group)
 
         # -- Cover Letter Style --
@@ -182,6 +194,7 @@ class SettingsTab(QWidget):
         self.config.set("resume.phone", self._phone.text())
         self.config.set("resume.location", self._location.text())
         self.config.set("resume.output_dir", self._output_dir.text())
+        self.config.set("resume.template", self._template_combo.currentData())
         self.config.set("resume.style_rules", self._style_rules.toPlainText())
         self.config.set("scoring.deep_threshold", self._deep_threshold.value())
         self.config.set("scoring.auto_archive_below", self._auto_archive.value())

@@ -21,6 +21,8 @@ SRC = PROJECT_ROOT / "src" / "jobhunter"
 datas = [
     # Prompt templates
     (str(SRC / "prompts"), "jobhunter/prompts"),
+    # Resume templates
+    (str(SRC / "templates" / "*.docx"), "jobhunter/templates"),
     # Default config
     (str(SRC / "default_config.json"), "jobhunter"),
 ]
