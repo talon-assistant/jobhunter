@@ -438,21 +438,35 @@ class BulletReviewPage(QWizardPage):
         self._progress.setVisible(True)
         self._progress_label.setVisible(True)
         self._progress.setValue(0)
-        self._progress_label.setText("Extracting bullets...")
+        self._progress.setMaximum(len(files) + (1 if library_path else 0))
+        self._progress_label.setText("Preparing extraction...")
         self._bullet_list.clear()
         self._bullets = []
+
+        # Store references for the thread to update progress
+        self._extract_files = files
+        self._extract_library = library_path
+        self._extract_total = len(files) + (1 if library_path else 0)
+        self._extract_done = 0
+        self._llm_available = False
+        self._llm_error_msg = ""
 
         def do_extract():
             extracted = []
 
-            # Import existing library
+            # Import existing library first
             if library_path:
+                self._update_progress(0, f"Importing library: {Path(library_path).name}")
                 extracted.extend(self._parse_library_md(library_path))
+                self._extract_done += 1
+
+            if not files:
+                return extracted
 
             # Extract from resume files
             from jobhunter.core.doc_extractor import extract_text
 
-            # Try to get LLM client
+            # Test LLM availability before starting
             provider = self.config.get("llm.provider", "claude-cli")
             api_key = ""
             try:
@@ -469,14 +483,33 @@ class BulletReviewPage(QWizardPage):
 
             try:
                 llm = LLMClient(provider=provider, api_key=api_key)
-            except Exception:
-                pass
+                if not llm.is_healthy():
+                    self._llm_error_msg = f"LLM provider '{provider}' is not available. Using smart text extraction instead."
+                    llm = None
+                else:
+                    self._llm_available = True
+            except Exception as exc:
+                self._llm_error_msg = f"LLM not available ({exc}). Using smart text extraction instead."
+                llm = None
+
+            if not llm:
+                self._update_progress(0, self._llm_error_msg)
 
             for idx, fpath in enumerate(files):
+                filename = Path(fpath).name
+                method = "LLM" if llm else "text"
+                self._update_progress(
+                    self._extract_done + idx,
+                    f"[{idx+1}/{len(files)}] Extracting ({method}): {filename}"
+                )
+
                 text = extract_text(fpath)
                 if not text:
+                    self._update_progress(
+                        self._extract_done + idx,
+                        f"[{idx+1}/{len(files)}] Skipped (no text): {filename}"
+                    )
                     continue
-                filename = Path(fpath).name
 
                 if llm and extract_prompt:
                     try:
@@ -499,11 +532,15 @@ class BulletReviewPage(QWizardPage):
                                         "source": filename,
                                         "priority": "normal",
                                     })
-                    except Exception:
-                        log.exception("LLM extraction failed for %s, using fallback", filename)
-                        extracted.extend(self._fallback_extract(text, filename))
+                    except Exception as exc:
+                        log.exception("LLM extraction failed for %s", filename)
+                        self._update_progress(
+                            self._extract_done + idx,
+                            f"[{idx+1}/{len(files)}] LLM failed for {filename}, using text extraction..."
+                        )
+                        extracted.extend(self._smart_extract(text, filename))
                 else:
-                    extracted.extend(self._fallback_extract(text, filename))
+                    extracted.extend(self._smart_extract(text, filename))
 
             return extracted
 
@@ -511,11 +548,25 @@ class BulletReviewPage(QWizardPage):
             self._bullets = extracted
             self._refresh_list()
             self._progress.setVisible(False)
-            self._progress_label.setVisible(False)
+            if extracted:
+                msg = f"Extracted {len(extracted)} bullets from {len(files)} file(s)."
+                if self._llm_error_msg:
+                    msg += f"\n{self._llm_error_msg}"
+                self._progress_label.setText(msg)
+                self._progress_label.setStyleSheet("color: #81c784;")
+            else:
+                msg = "No bullets extracted."
+                if self._llm_error_msg:
+                    msg += f"\n{self._llm_error_msg}"
+                msg += "\nTry configuring an LLM provider in the previous step, or add bullets manually later."
+                self._progress_label.setText(msg)
+                self._progress_label.setStyleSheet("color: #ef5350;")
+            self._progress_label.setWordWrap(True)
 
         def on_error(err):
             self._progress.setVisible(False)
             self._progress_label.setText(f"Extraction error: {err}")
+            self._progress_label.setStyleSheet("color: #ef5350;")
 
         worker = SimpleWorker(do_extract)
         worker.finished.connect(on_done)
@@ -523,20 +574,97 @@ class BulletReviewPage(QWizardPage):
         self._workers.append(worker)
         worker.start()
 
+    def _update_progress(self, current: int, message: str) -> None:
+        """Thread-safe progress update via signals."""
+        # QProgressBar.setValue and QLabel.setText are safe from threads
+        # when called through the main event loop, but for simplicity
+        # we call them directly (PySide6 handles cross-thread updates
+        # for these simple property sets)
+        try:
+            if self._progress.isVisible():
+                self._progress.setValue(current)
+            self._progress_label.setText(message)
+        except RuntimeError:
+            pass  # Widget deleted
+
     @staticmethod
-    def _fallback_extract(text: str, filename: str) -> list[dict]:
-        """Simple line-based bullet extraction without LLM."""
+    def _smart_extract(text: str, filename: str) -> list[dict]:
+        """Extract bullet-like lines from resume text without an LLM.
+
+        Handles multiple formats:
+        - Markdown bullets (- , * )
+        - Unicode bullets (bullet, arrow, diamond, etc.)
+        - Lines that start with action verbs (Led, Built, Managed, etc.)
+        - Numbered list items
+        """
+        import re
+
+        ACTION_VERBS = {
+            "led", "managed", "built", "developed", "designed", "implemented",
+            "created", "launched", "directed", "established", "delivered",
+            "reduced", "increased", "improved", "achieved", "negotiated",
+            "orchestrated", "spearheaded", "transformed", "streamlined",
+            "automated", "architected", "deployed", "migrated", "consolidated",
+            "mentored", "trained", "supervised", "coordinated", "executed",
+            "analyzed", "optimized", "secured", "maintained", "administered",
+            "oversaw", "pioneered", "introduced", "resolved", "eliminated",
+        }
+
+        # Patterns that indicate a bullet point
+        BULLET_PREFIXES = re.compile(
+            r"^(?:"
+            r"[-*•◦▪▸►➤→‣⁃]\s+"          # Common bullet chars
+            r"|\d+[.)]\s+"                  # Numbered lists: 1. or 1)
+            r"|[a-z][.)]\s+"               # Lettered lists: a. or a)
+            r")"
+        )
+
         bullets = []
-        for line in text.splitlines():
-            line = line.strip()
-            if line.startswith(("- ", "* ", "o ")) and len(line) > 17:
+        lines = text.splitlines()
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or len(stripped) < 15:
+                continue
+
+            # Skip likely headers (all caps, very short, or no lowercase)
+            if stripped.isupper() and len(stripped) < 60:
+                continue
+            # Skip contact info patterns
+            if "@" in stripped and len(stripped) < 80:
+                continue
+            if re.match(r"^\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", stripped):
+                continue
+            # Skip dates-only lines
+            if re.match(r"^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", stripped):
+                if len(stripped) < 40:
+                    continue
+
+            is_bullet = False
+            clean_text = stripped
+
+            # Check for bullet prefix
+            m = BULLET_PREFIXES.match(stripped)
+            if m:
+                is_bullet = True
+                clean_text = stripped[m.end():].strip()
+
+            # Check for action verb start (common in resume bullets)
+            if not is_bullet:
+                first_word = stripped.split()[0].rstrip(",:;").lower()
+                if first_word in ACTION_VERBS:
+                    is_bullet = True
+                    clean_text = stripped
+
+            if is_bullet and len(clean_text) >= 15 and len(clean_text) <= 500:
                 bullets.append({
                     "section": "experience",
                     "role": "",
-                    "text": line.lstrip("-*o ").strip(),
+                    "text": clean_text,
                     "source": filename,
                     "priority": "normal",
                 })
+
         return bullets
 
     @staticmethod
