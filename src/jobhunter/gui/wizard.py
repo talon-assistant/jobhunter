@@ -3,15 +3,18 @@
 Guides the user through:
   1. LLM provider selection + test
   2. Personal info (name, email, phone, location)
-  3. Resume import (drop files, extract bullets, review)
-  4. LinkedIn login (opens visible browser for manual login)
-  5. First search URL generation
+  3. Resume import (browse files, remove files, or import existing library)
+  4. Interactive bullet review (dedup, edit, delete, set priority)
+  5. LinkedIn login (opens visible browser, installs Chromium if needed)
+  6. First search URL generation
 """
 
 from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -19,7 +22,8 @@ from PySide6.QtWidgets import (
     QWizard, QWizardPage, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QComboBox, QPushButton, QRadioButton, QButtonGroup,
     QFileDialog, QListWidget, QListWidgetItem, QTextEdit,
-    QMessageBox, QProgressBar, QGroupBox, QFormLayout,
+    QMessageBox, QProgressBar, QGroupBox, QFormLayout, QSpinBox,
+    QSplitter, QApplication,
 )
 
 from jobhunter.config import Config
@@ -35,24 +39,22 @@ class SetupWizard(QWizard):
     def __init__(self, config: Config, parent=None) -> None:
         super().__init__(parent)
         self.config = config
-        self._llm_client: LLMClient | None = None
         self._workers: list[SimpleWorker] = []
 
         self.setWindowTitle("JobHunter Setup")
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(800, 600)
         self.setWizardStyle(QWizard.ModernStyle)
 
         self.addPage(WelcomePage())
         self.addPage(ProviderPage(config))
         self.addPage(PersonalInfoPage(config))
-        self.addPage(ResumeImportPage(config))
+        self._import_page = ResumeImportPage(config)
+        self.addPage(self._import_page)
+        self._review_page = BulletReviewPage(config)
+        self.addPage(self._review_page)
         self.addPage(LinkedInLoginPage(config))
         self.addPage(FirstSearchPage(config))
         self.addPage(FinishPage())
-
-    def get_llm_client(self) -> LLMClient | None:
-        """Return the configured LLM client after wizard completes."""
-        return self._llm_client
 
 
 class WelcomePage(QWizardPage):
@@ -67,10 +69,11 @@ class WelcomePage(QWizardPage):
             "<li>Choosing your AI provider (Claude, OpenAI, Gemini, etc.)</li>"
             "<li>Entering your contact info for resumes and cover letters</li>"
             "<li>Importing your existing resumes to build a bullet library</li>"
+            "<li>Reviewing and organizing your resume bullets</li>"
             "<li>Logging into LinkedIn for job scraping</li>"
             "<li>Setting up your first job search</li>"
             "</ol>"
-            "<p>This takes about 5-10 minutes. You can change everything later in Settings.</p>"
+            "<p>This takes about 10-15 minutes. You can change everything later in Settings.</p>"
         ))
         layout.addStretch()
 
@@ -87,7 +90,7 @@ class ProviderPage(QWizardPage):
         self._group = QButtonGroup(self)
         providers = [
             ("claude-cli", "Claude CLI (Recommended)",
-             "Uses your installed Claude Code. No API key needed, uses your existing plan."),
+             "Uses your installed Claude Code. No API key needed."),
             ("anthropic", "Anthropic API",
              "Direct API access to Claude. Requires an API key from console.anthropic.com."),
             ("openai", "OpenAI API",
@@ -95,7 +98,7 @@ class ProviderPage(QWizardPage):
             ("gemini", "Google Gemini API",
              "Use Gemini models. Requires an API key from aistudio.google.com."),
             ("openai-compatible", "Other / Local Server",
-             "Any OpenAI-compatible endpoint (llama-server, Ollama, etc.)"),
+             "Any OpenAI-compatible endpoint (Ollama, llama-server, etc.)"),
         ]
 
         current = config.get("llm.provider", "claude-cli")
@@ -109,7 +112,6 @@ class ProviderPage(QWizardPage):
 
         layout.addSpacing(10)
 
-        # API key input
         key_group = QGroupBox("API Key")
         key_layout = QHBoxLayout(key_group)
         self._api_key = QLineEdit()
@@ -123,10 +125,8 @@ class ProviderPage(QWizardPage):
 
         self._test_label = QLabel("")
         key_layout.addWidget(self._test_label)
-
         layout.addWidget(key_group)
 
-        # Endpoint input (for openai-compatible)
         self._endpoint_group = QGroupBox("Endpoint URL")
         ep_layout = QHBoxLayout(self._endpoint_group)
         self._endpoint = QLineEdit()
@@ -136,7 +136,6 @@ class ProviderPage(QWizardPage):
 
         self._group.buttonClicked.connect(self._on_provider_change)
         self._on_provider_change()
-
         layout.addStretch()
 
     def _selected_provider(self) -> str:
@@ -151,7 +150,8 @@ class ProviderPage(QWizardPage):
 
         if provider == "claude-cli":
             has_cli = shutil.which("claude") is not None
-            self._test_label.setText("✓ Claude CLI found" if has_cli else "✗ Install Claude Code first")
+            self._test_label.setText("Claude CLI found" if has_cli else "Claude CLI not found — install Claude Code first")
+            self._test_label.setStyleSheet("color: #81c784;" if has_cli else "color: #ef5350;")
 
     def _on_test(self) -> None:
         provider = self._selected_provider()
@@ -162,27 +162,23 @@ class ProviderPage(QWizardPage):
         )
         try:
             client.generate_text("Reply: OK", max_tokens=10)
-            self._test_label.setText("✓ Connected!")
+            self._test_label.setText("Connected!")
             self._test_label.setStyleSheet("color: #81c784;")
         except Exception as exc:
-            self._test_label.setText(f"✗ {exc}")
+            self._test_label.setText(str(exc)[:80])
             self._test_label.setStyleSheet("color: #ef5350;")
 
     def validatePage(self) -> bool:
         provider = self._selected_provider()
         api_key = self._api_key.text().strip()
-
         self.config.set("llm.provider", provider)
         self.config.save()
-
-        # Save API key to keyring
         if api_key:
             try:
                 import keyring
                 keyring.set_password("jobhunter", f"api_key_{provider}", api_key)
             except Exception:
                 pass
-
         return True
 
 
@@ -197,13 +193,10 @@ class PersonalInfoPage(QWizardPage):
         self._name = QLineEdit(config.get("resume.name", ""))
         self._name.setPlaceholderText("Your full name")
         layout.addRow("Name:", self._name)
-
         self._email = QLineEdit(config.get("resume.email", ""))
         layout.addRow("Email:", self._email)
-
         self._phone = QLineEdit(config.get("resume.phone", ""))
         layout.addRow("Phone:", self._phone)
-
         self._location = QLineEdit(config.get("resume.location", ""))
         self._location.setPlaceholderText("e.g., Columbus, OH")
         layout.addRow("Location:", self._location)
@@ -223,50 +216,446 @@ class ResumeImportPage(QWizardPage):
         self.config = config
         self.setTitle("Import Your Resumes")
         self.setSubTitle(
-            "Drop in your existing resume files. We'll extract bullet points to build "
-            "your resume library. You can review and edit everything after setup."
+            "Add your resume files to extract bullet points. You can also import "
+            "an existing bullet library markdown if you have one."
         )
 
         layout = QVBoxLayout(self)
 
+        # Buttons row
         btn_row = QHBoxLayout()
         btn_browse = QPushButton("Browse for Resume Files")
         btn_browse.setProperty("primary", True)
         btn_browse.clicked.connect(self._on_browse)
         btn_row.addWidget(btn_browse)
+
+        btn_remove = QPushButton("Remove Selected")
+        btn_remove.setProperty("danger", True)
+        btn_remove.clicked.connect(self._on_remove)
+        btn_row.addWidget(btn_remove)
+
         btn_row.addStretch()
+
+        btn_library = QPushButton("Import Existing Library (.md)")
+        btn_library.clicked.connect(self._on_import_library)
+        btn_row.addWidget(btn_library)
+
         layout.addLayout(btn_row)
 
+        # File list
         self._file_list = QListWidget()
+        self._file_list.setSelectionMode(QListWidget.ExtendedSelection)
         layout.addWidget(self._file_list)
 
-        self._status = QLabel("No files selected yet. You can also skip this and import later from the Resume Library tab.")
+        self._status = QLabel(
+            "No files selected yet. You can also skip this and import later "
+            "from the Resume Library tab."
+        )
         self._status.setProperty("dim", True)
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
+
+        self._library_path: str = ""
 
     def _on_browse(self) -> None:
         from jobhunter.core.doc_extractor import supported_extensions
         ext_filter = "Resume Files (" + " ".join(f"*{e}" for e in supported_extensions()) + ")"
         files, _ = QFileDialog.getOpenFileNames(self, "Select Resume Files", "", ext_filter)
         for f in files:
-            name = Path(f).name
-            # Avoid duplicates
-            existing = [self._file_list.item(i).data(Qt.UserRole) for i in range(self._file_list.count())]
+            existing = [
+                self._file_list.item(i).data(Qt.UserRole)
+                for i in range(self._file_list.count())
+            ]
             if f not in existing:
-                item = QListWidgetItem(name)
+                item = QListWidgetItem(Path(f).name)
                 item.setData(Qt.UserRole, f)
                 self._file_list.addItem(item)
+        self._update_status()
 
+    def _on_remove(self) -> None:
+        for item in self._file_list.selectedItems():
+            self._file_list.takeItem(self._file_list.row(item))
+        self._update_status()
+
+    def _on_import_library(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Bullet Library", "", "Markdown Files (*.md);;All Files (*)"
+        )
+        if path:
+            self._library_path = path
+            # Add it to the list with a special marker
+            item = QListWidgetItem(f"[LIBRARY] {Path(path).name}")
+            item.setData(Qt.UserRole, f"library:{path}")
+            self._file_list.addItem(item)
+            self._update_status()
+
+    def _update_status(self) -> None:
         count = self._file_list.count()
-        self._status.setText(f"{count} file(s) selected. They'll be processed after setup completes.")
+        if count:
+            self._status.setText(
+                f"{count} file(s) selected. Click Next to extract and review bullets."
+            )
+        else:
+            self._status.setText(
+                "No files selected. You can skip this and import later."
+            )
 
     def get_files(self) -> list[str]:
-        """Return list of file paths selected by the user."""
-        return [
-            self._file_list.item(i).data(Qt.UserRole)
-            for i in range(self._file_list.count())
-        ]
+        """Return list of resume file paths (not library imports)."""
+        files = []
+        for i in range(self._file_list.count()):
+            path = self._file_list.item(i).data(Qt.UserRole)
+            if not path.startswith("library:"):
+                files.append(path)
+        return files
+
+    def get_library_path(self) -> str:
+        """Return the library markdown path if one was selected."""
+        for i in range(self._file_list.count()):
+            path = self._file_list.item(i).data(Qt.UserRole)
+            if path.startswith("library:"):
+                return path[len("library:"):]
+        return ""
+
+
+class BulletReviewPage(QWizardPage):
+    """Interactive bullet review: dedup, edit, delete, set priority."""
+
+    def __init__(self, config: Config) -> None:
+        super().__init__()
+        self.config = config
+        self.setTitle("Review Your Bullets")
+        self.setSubTitle(
+            "We extracted these bullets from your resumes. "
+            "Review, edit, delete duplicates, and set priorities."
+        )
+        self._bullets: list[dict] = []  # {section, role, text, source, priority}
+        self._workers: list[SimpleWorker] = []
+
+        layout = QVBoxLayout(self)
+
+        # Progress bar (for extraction)
+        self._progress = QProgressBar()
+        self._progress.setVisible(False)
+        layout.addWidget(self._progress)
+
+        self._progress_label = QLabel("")
+        self._progress_label.setVisible(False)
+        layout.addWidget(self._progress_label)
+
+        # Splitter: bullet list + edit pane
+        splitter = QSplitter(Qt.Horizontal)
+
+        # Left: bullet list
+        left = QVBoxLayout()
+        left_widget = QGroupBox("Extracted Bullets")
+        left_inner = QVBoxLayout(left_widget)
+
+        self._bullet_list = QListWidget()
+        self._bullet_list.currentItemChanged.connect(self._on_bullet_selected)
+        left_inner.addWidget(self._bullet_list)
+
+        list_btns = QHBoxLayout()
+        btn_delete = QPushButton("Delete Selected")
+        btn_delete.setProperty("danger", True)
+        btn_delete.clicked.connect(self._on_delete)
+        list_btns.addWidget(btn_delete)
+
+        btn_dedup = QPushButton("Auto-Remove Duplicates")
+        btn_dedup.clicked.connect(self._on_dedup)
+        list_btns.addWidget(btn_dedup)
+
+        self._count_label = QLabel("0 bullets")
+        self._count_label.setProperty("dim", True)
+        list_btns.addWidget(self._count_label)
+        list_btns.addStretch()
+
+        left_inner.addLayout(list_btns)
+        splitter.addWidget(left_widget)
+
+        # Right: edit pane
+        right_widget = QGroupBox("Edit Bullet")
+        right_layout = QVBoxLayout(right_widget)
+
+        right_layout.addWidget(QLabel("Section:"))
+        self._edit_section = QLineEdit()
+        right_layout.addWidget(self._edit_section)
+
+        right_layout.addWidget(QLabel("Role:"))
+        self._edit_role = QLineEdit()
+        right_layout.addWidget(self._edit_role)
+
+        right_layout.addWidget(QLabel("Text:"))
+        self._edit_text = QTextEdit()
+        self._edit_text.setMaximumHeight(100)
+        right_layout.addWidget(self._edit_text)
+
+        right_layout.addWidget(QLabel("Priority:"))
+        self._edit_priority = QComboBox()
+        self._edit_priority.addItems(["strong", "normal", "weak"])
+        right_layout.addWidget(self._edit_priority)
+
+        right_layout.addWidget(QLabel("Source:"))
+        self._edit_source = QLabel("")
+        self._edit_source.setProperty("dim", True)
+        right_layout.addWidget(self._edit_source)
+
+        btn_save = QPushButton("Save Changes")
+        btn_save.setProperty("primary", True)
+        btn_save.clicked.connect(self._on_save_edit)
+        right_layout.addWidget(btn_save)
+
+        right_layout.addStretch()
+        splitter.addWidget(right_widget)
+
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
+
+    def initializePage(self) -> None:
+        """Called when the page is shown — extract bullets from files."""
+        wizard = self.wizard()
+        import_page = None
+        for i in range(wizard.pageCount()):
+            page = wizard.page(i)
+            if isinstance(page, ResumeImportPage):
+                import_page = page
+                break
+
+        if not import_page:
+            return
+
+        files = import_page.get_files()
+        library_path = import_page.get_library_path()
+
+        if not files and not library_path:
+            self._bullet_list.clear()
+            self._bullet_list.addItem(
+                QListWidgetItem("No files to import. Click Next to continue.")
+            )
+            return
+
+        self._progress.setVisible(True)
+        self._progress_label.setVisible(True)
+        self._progress.setValue(0)
+        self._progress_label.setText("Extracting bullets...")
+        self._bullet_list.clear()
+        self._bullets = []
+
+        def do_extract():
+            extracted = []
+
+            # Import existing library
+            if library_path:
+                extracted.extend(self._parse_library_md(library_path))
+
+            # Extract from resume files
+            from jobhunter.core.doc_extractor import extract_text
+
+            # Try to get LLM client
+            provider = self.config.get("llm.provider", "claude-cli")
+            api_key = ""
+            try:
+                import keyring
+                api_key = keyring.get_password("jobhunter", f"api_key_{provider}") or ""
+            except Exception:
+                pass
+
+            llm = None
+            extract_prompt = ""
+            prompt_path = Path(__file__).parent.parent / "prompts" / "extract_bullets.txt"
+            if prompt_path.exists():
+                extract_prompt = prompt_path.read_text(encoding="utf-8")
+
+            try:
+                llm = LLMClient(provider=provider, api_key=api_key)
+            except Exception:
+                pass
+
+            for idx, fpath in enumerate(files):
+                text = extract_text(fpath)
+                if not text:
+                    continue
+                filename = Path(fpath).name
+
+                if llm and extract_prompt:
+                    try:
+                        prompt = extract_prompt.replace("{{DOCUMENT}}", text[:8000])
+                        prompt = prompt.replace("{{FILENAME}}", filename)
+                        result = llm.generate_json(
+                            prompt,
+                            {"type": "object", "properties": {"roles": {"type": "array"}}},
+                            system_prompt="Extract bullets exactly as written.",
+                        )
+                        roles = result.get("roles", []) if isinstance(result, dict) else []
+                        for role in roles:
+                            for bullet in role.get("bullets", []):
+                                bullet = bullet.strip()
+                                if bullet and len(bullet) > 10:
+                                    extracted.append({
+                                        "section": role.get("section", "experience"),
+                                        "role": role.get("role", ""),
+                                        "text": bullet,
+                                        "source": filename,
+                                        "priority": "normal",
+                                    })
+                    except Exception:
+                        log.exception("LLM extraction failed for %s, using fallback", filename)
+                        extracted.extend(self._fallback_extract(text, filename))
+                else:
+                    extracted.extend(self._fallback_extract(text, filename))
+
+            return extracted
+
+        def on_done(extracted):
+            self._bullets = extracted
+            self._refresh_list()
+            self._progress.setVisible(False)
+            self._progress_label.setVisible(False)
+
+        def on_error(err):
+            self._progress.setVisible(False)
+            self._progress_label.setText(f"Extraction error: {err}")
+
+        worker = SimpleWorker(do_extract)
+        worker.finished.connect(on_done)
+        worker.error.connect(on_error)
+        self._workers.append(worker)
+        worker.start()
+
+    @staticmethod
+    def _fallback_extract(text: str, filename: str) -> list[dict]:
+        """Simple line-based bullet extraction without LLM."""
+        bullets = []
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith(("- ", "* ", "o ")) and len(line) > 17:
+                bullets.append({
+                    "section": "experience",
+                    "role": "",
+                    "text": line.lstrip("-*o ").strip(),
+                    "source": filename,
+                    "priority": "normal",
+                })
+        return bullets
+
+    @staticmethod
+    def _parse_library_md(path: str) -> list[dict]:
+        """Parse a resumelibrary.md file into bullet dicts."""
+        text = Path(path).read_text(encoding="utf-8")
+        bullets = []
+        current_section = ""
+        current_role = ""
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                current_section = stripped[3:].strip()
+                current_role = ""
+            elif stripped.startswith("*") and stripped.endswith("*") and not stripped.startswith("- "):
+                current_role = stripped.strip("*").strip()
+            elif stripped.startswith("- ") and current_section:
+                bullet = stripped[2:].strip()
+                if bullet:
+                    bullets.append({
+                        "section": current_section,
+                        "role": current_role,
+                        "text": bullet,
+                        "source": Path(path).name,
+                        "priority": "normal",
+                    })
+        return bullets
+
+    def _refresh_list(self) -> None:
+        self._bullet_list.clear()
+        for i, b in enumerate(self._bullets):
+            indicator = {"strong": "★", "normal": "●", "weak": "○"}.get(b["priority"], "●")
+            label = f"{indicator} [{b['section']}] {b['text'][:100]}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, i)
+            self._bullet_list.addItem(item)
+        self._count_label.setText(f"{len(self._bullets)} bullets")
+
+    def _on_bullet_selected(self, current, previous) -> None:
+        if not current:
+            return
+        idx = current.data(Qt.UserRole)
+        if idx is None or idx >= len(self._bullets):
+            return
+        b = self._bullets[idx]
+        self._edit_section.setText(b["section"])
+        self._edit_role.setText(b["role"])
+        self._edit_text.setPlainText(b["text"])
+        self._edit_priority.setCurrentText(b["priority"])
+        self._edit_source.setText(f"Source: {b['source']}")
+
+    def _on_save_edit(self) -> None:
+        current = self._bullet_list.currentItem()
+        if not current:
+            return
+        idx = current.data(Qt.UserRole)
+        if idx is None or idx >= len(self._bullets):
+            return
+        self._bullets[idx]["section"] = self._edit_section.text().strip()
+        self._bullets[idx]["role"] = self._edit_role.text().strip()
+        self._bullets[idx]["text"] = self._edit_text.toPlainText().strip()
+        self._bullets[idx]["priority"] = self._edit_priority.currentText()
+        self._refresh_list()
+
+    def _on_delete(self) -> None:
+        selected = self._bullet_list.selectedItems()
+        if not selected:
+            return
+        indices = sorted([item.data(Qt.UserRole) for item in selected], reverse=True)
+        for idx in indices:
+            if idx is not None and idx < len(self._bullets):
+                self._bullets.pop(idx)
+        self._refresh_list()
+
+    def _on_dedup(self) -> None:
+        """Remove near-duplicate bullets using simple text similarity."""
+        if len(self._bullets) < 2:
+            return
+
+        # Simple dedup: normalize and compare
+        seen: dict[str, int] = {}
+        to_remove: list[int] = []
+
+        for i, b in enumerate(self._bullets):
+            # Normalize: lowercase, strip punctuation, collapse whitespace
+            normalized = " ".join(b["text"].lower().split())
+            # Check for exact or near matches
+            found_dupe = False
+            for existing_norm, existing_idx in seen.items():
+                if normalized == existing_norm:
+                    to_remove.append(i)
+                    found_dupe = True
+                    break
+                # Simple substring check for very similar bullets
+                shorter, longer = sorted([normalized, existing_norm], key=len)
+                if len(shorter) > 20 and shorter in longer:
+                    to_remove.append(i)
+                    found_dupe = True
+                    break
+            if not found_dupe:
+                seen[normalized] = i
+
+        if not to_remove:
+            QMessageBox.information(self, "No Duplicates", "No duplicate bullets found.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Remove Duplicates",
+            f"Found {len(to_remove)} duplicate(s). Remove them?",
+        )
+        if reply == QMessageBox.Yes:
+            for idx in sorted(to_remove, reverse=True):
+                self._bullets.pop(idx)
+            self._refresh_list()
+
+    def get_bullets(self) -> list[dict]:
+        """Return the reviewed bullet list."""
+        return list(self._bullets)
 
 
 class LinkedInLoginPage(QWizardPage):
@@ -276,7 +665,7 @@ class LinkedInLoginPage(QWizardPage):
         self.setTitle("LinkedIn Login")
         self.setSubTitle(
             "Click the button below to open a browser window. "
-            "Log into LinkedIn manually — your session will be saved securely for future scraping."
+            "Log into LinkedIn manually — your session will be saved securely."
         )
 
         layout = QVBoxLayout(self)
@@ -296,28 +685,72 @@ class LinkedInLoginPage(QWizardPage):
         layout.addStretch()
 
     def _on_login(self) -> None:
-        self._status.setText("Opening browser... Log in to LinkedIn, then close the browser when done.")
         self._btn_login.setEnabled(False)
+        self._status.setText("Checking for Chromium browser...")
+        QApplication.processEvents()
 
+        # Check if Playwright Chromium is installed, offer to download
         try:
             from playwright.sync_api import sync_playwright
-            from jobhunter.core.profile_vault import ProfileVault
+            pw = sync_playwright().start()
+            try:
+                # Try to launch — this will fail if Chromium isn't installed
+                browser = pw.chromium.launch(headless=True)
+                browser.close()
+            except Exception:
+                pw.stop()
+                # Chromium not installed — offer to download
+                reply = QMessageBox.question(
+                    self, "Install Chromium",
+                    "Playwright Chromium browser is not installed.\n\n"
+                    "Download it now? (~150MB)\n\n"
+                    "This is needed for LinkedIn scraping.",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if reply == QMessageBox.Yes:
+                    self._status.setText("Downloading Chromium... this may take a minute.")
+                    QApplication.processEvents()
+                    result = subprocess.run(
+                        [sys.executable, "-m", "playwright", "install", "chromium"],
+                        capture_output=True, text=True,
+                    )
+                    if result.returncode != 0:
+                        self._status.setText("Failed to install Chromium. You can try later.")
+                        self._status.setStyleSheet("color: #ef5350;")
+                        self._btn_login.setEnabled(True)
+                        return
+                else:
+                    self._status.setText("Skipped. You can install Chromium later.")
+                    self._btn_login.setEnabled(True)
+                    return
 
+                pw = sync_playwright().start()
+        except ImportError:
+            self._status.setText("Playwright not installed. Skipping LinkedIn login.")
+            self._status.setStyleSheet("color: #ef5350;")
+            self._btn_login.setEnabled(True)
+            return
+
+        # Now do the actual login
+        self._status.setText("Opening browser... Log in to LinkedIn, then close the browser.")
+        QApplication.processEvents()
+
+        try:
+            from jobhunter.core.profile_vault import ProfileVault
             vault = ProfileVault(Path.home() / ".jobhunter")
             profile_dir = str(vault.unlock())
 
-            pw = sync_playwright().start()
             browser = pw.chromium.launch_persistent_context(
                 profile_dir,
-                headless=False,  # Visible browser for user login
+                headless=False,
                 args=["--disable-blink-features=AutomationControlled"],
             )
             page = browser.new_page()
             page.goto("https://www.linkedin.com/login")
 
-            # Wait for user to close the browser
             try:
-                browser.pages[0].wait_for_event("close", timeout=300000)
+                # Wait for user to close browser (up to 5 minutes)
+                page.wait_for_event("close", timeout=300000)
             except Exception:
                 pass
 
@@ -328,11 +761,15 @@ class LinkedInLoginPage(QWizardPage):
             pw.stop()
 
             vault.lock()
-            self._status.setText("✓ LinkedIn session saved and encrypted!")
+            self._status.setText("LinkedIn session saved and encrypted!")
             self._status.setStyleSheet("color: #81c784;")
         except Exception as exc:
             self._status.setText(f"Login failed: {exc}")
             self._status.setStyleSheet("color: #ef5350;")
+            try:
+                pw.stop()
+            except Exception:
+                pass
         finally:
             self._btn_login.setEnabled(True)
 
@@ -349,11 +786,11 @@ class FirstSearchPage(QWizardPage):
         layout = QFormLayout(self)
 
         self._title = QLineEdit()
-        self._title.setPlaceholderText("e.g., Security Engineer, Product Manager, Data Analyst")
+        self._title.setPlaceholderText("e.g., Security Engineer, Product Manager")
         layout.addRow("Job Title:", self._title)
 
         self._search_location = QLineEdit()
-        self._search_location.setPlaceholderText("e.g., Remote, New York, San Francisco")
+        self._search_location.setPlaceholderText("e.g., Remote, New York")
         layout.addRow("Location:", self._search_location)
 
         self._preview = QTextEdit()
@@ -365,10 +802,12 @@ class FirstSearchPage(QWizardPage):
         btn_gen.clicked.connect(self._on_generate)
         layout.addRow("", btn_gen)
 
-        note = QLabel("You can also paste search URLs manually in the Search URLs tab later.")
+        note = QLabel("You can also paste URLs manually in the Search URLs tab later.")
         note.setProperty("dim", True)
         note.setWordWrap(True)
         layout.addRow("", note)
+
+        self._generated_urls: list[tuple[str, str]] = []
 
     def _on_generate(self) -> None:
         title = self._title.text().strip()
@@ -379,18 +818,17 @@ class FirstSearchPage(QWizardPage):
         title_encoded = title.replace(" ", "%20")
         loc_encoded = loc.replace(" ", "%20") if loc else ""
 
-        urls = []
-        urls.append(("linkedin", f"https://www.linkedin.com/jobs/search/?keywords={title_encoded}&location={loc_encoded}"))
-        urls.append(("dice", f"https://www.dice.com/jobs?q={title_encoded}&location={loc_encoded}"))
-        urls.append(("builtin", f"https://builtin.com/jobs?search={title_encoded}&location={loc_encoded}"))
+        self._generated_urls = [
+            ("linkedin", f"https://www.linkedin.com/jobs/search/?keywords={title_encoded}&location={loc_encoded}"),
+            ("dice", f"https://www.dice.com/jobs?q={title_encoded}&location={loc_encoded}"),
+            ("builtin", f"https://builtin.com/jobs?search={title_encoded}&location={loc_encoded}"),
+        ]
 
-        preview_lines = [f"[{board}] {url}" for board, url in urls]
-        self._preview.setPlainText("\n".join(preview_lines))
-        self._generated_urls = urls
+        lines = [f"[{board}] {url}" for board, url in self._generated_urls]
+        self._preview.setPlainText("\n".join(lines))
 
     def get_generated_urls(self) -> list[tuple[str, str]]:
-        """Return list of (board, url) tuples."""
-        return getattr(self, "_generated_urls", [])
+        return list(self._generated_urls)
 
 
 class FinishPage(QWizardPage):
@@ -400,12 +838,12 @@ class FinishPage(QWizardPage):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
             "<h2>Setup complete</h2>"
-            "<p>JobHunter is ready to use. Here's what you can do next:</p>"
+            "<p>JobHunter is ready to use:</p>"
             "<ul>"
             "<li><b>Dashboard</b> — Click 'Run Search' to find jobs</li>"
-            "<li><b>Resume Library</b> — Review and edit your imported bullets</li>"
+            "<li><b>Resume Library</b> — Review and edit your bullet library</li>"
             "<li><b>Settings</b> — Fine-tune your preferences anytime</li>"
             "</ul>"
-            "<p>Click Finish to start using JobHunter.</p>"
+            "<p>Click Finish to start.</p>"
         ))
         layout.addStretch()

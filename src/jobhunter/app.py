@@ -185,7 +185,7 @@ def main() -> None:
         from jobhunter.gui.wizard import SetupWizard
         wizard = SetupWizard(config)
         result = wizard.exec()
-        if result == wizard.Accepted:
+        if result == 1:  # QDialog.DialogCode.Accepted
             # Process wizard results
             _process_wizard_results(config, wizard)
             config.set("setup_complete", True)
@@ -205,15 +205,34 @@ def _process_wizard_results(config: Config, wizard) -> None:
     """Process results from the setup wizard after it completes."""
     from jobhunter.core.job_db import JobDB
     from jobhunter.core.resume_db import ResumeDB
-    from jobhunter.core.llm_client import LLMClient, LLMError
-    from jobhunter.core.doc_extractor import extract_text
+    from jobhunter.gui.wizard import BulletReviewPage, FirstSearchPage
 
     app_dir = config.path.parent
 
-    # Add generated search URLs
     pages = [wizard.page(i) for i in range(wizard.pageCount())]
+
+    # Save reviewed bullets to resume DB
     for page in pages:
-        if hasattr(page, "get_generated_urls"):
+        if isinstance(page, BulletReviewPage):
+            bullets = page.get_bullets()
+            if bullets:
+                resume_db_path = config.get("data.resume_db_path", "data/resume_library.db")
+                if not Path(resume_db_path).is_absolute():
+                    resume_db_path = str(app_dir / resume_db_path)
+                rdb = ResumeDB(resume_db_path)
+                for b in bullets:
+                    rdb.add_bullet(
+                        b["section"], b["text"],
+                        role=b.get("role", ""),
+                        source_file=b.get("source", "wizard"),
+                        priority=b.get("priority", "normal"),
+                    )
+                rdb.close()
+                log.info("Saved %d bullets from wizard", len(bullets))
+
+    # Add generated search URLs
+    for page in pages:
+        if isinstance(page, FirstSearchPage):
             urls = page.get_generated_urls()
             if urls:
                 job_db_path = config.get("data.job_db_path", "data/jobhunter.db")
@@ -223,71 +242,7 @@ def _process_wizard_results(config: Config, wizard) -> None:
                 for board, url in urls:
                     db.add_search_url(board, url)
                 db.close()
-
-        # Import resume files
-        if hasattr(page, "get_files"):
-            files = page.get_files()
-            if files:
-                resume_db_path = config.get("data.resume_db_path", "data/resume_library.db")
-                if not Path(resume_db_path).is_absolute():
-                    resume_db_path = str(app_dir / resume_db_path)
-                rdb = ResumeDB(resume_db_path)
-
-                # Try to use LLM for extraction
-                provider = config.get("llm.provider", "claude-cli")
-                try:
-                    import keyring
-                    api_key = keyring.get_password("jobhunter", f"api_key_{provider}") or ""
-                except Exception:
-                    api_key = ""
-
-                try:
-                    llm = LLMClient(provider=provider, api_key=api_key)
-                except Exception:
-                    llm = None
-
-                extract_prompt_path = Path(__file__).parent / "prompts" / "extract_bullets.txt"
-                extract_prompt = ""
-                if extract_prompt_path.exists():
-                    extract_prompt = extract_prompt_path.read_text(encoding="utf-8")
-
-                for fpath in files:
-                    text = extract_text(fpath)
-                    if not text:
-                        continue
-                    filename = Path(fpath).name
-
-                    if llm and extract_prompt:
-                        try:
-                            prompt = extract_prompt.replace("{{DOCUMENT}}", text[:8000])
-                            prompt = prompt.replace("{{FILENAME}}", filename)
-                            result = llm.generate_json(
-                                prompt,
-                                {"type": "object", "properties": {"roles": {"type": "array"}}},
-                                system_prompt="Extract bullets exactly as written.",
-                            )
-                            roles = result.get("roles", []) if isinstance(result, dict) else []
-                            for role in roles:
-                                section = role.get("section", "experience")
-                                role_name = role.get("role", "")
-                                for bullet in role.get("bullets", []):
-                                    bullet = bullet.strip()
-                                    if bullet and len(bullet) > 10:
-                                        dupes = rdb.find_duplicates(bullet, threshold=0.92)
-                                        if not dupes:
-                                            rdb.add_bullet(section, bullet, role=role_name, source_file=filename)
-                        except (LLMError, Exception):
-                            log.exception("LLM extraction failed for %s", filename)
-                    else:
-                        # Simple line-based fallback
-                        for line in text.splitlines():
-                            line = line.strip()
-                            if line.startswith(("- ", "* ")):
-                                bullet = line.lstrip("-* ").strip()
-                                if bullet and len(bullet) > 15:
-                                    rdb.add_bullet("experience", bullet, source_file=filename)
-
-                rdb.close()
+                log.info("Saved %d search URLs from wizard", len(urls))
 
 
 if __name__ == "__main__":
