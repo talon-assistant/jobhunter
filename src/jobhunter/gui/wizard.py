@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from jobhunter.config import Config
 from jobhunter.core.llm_client import LLMClient
-from jobhunter.gui.workers import SimpleWorker
+from jobhunter.gui.workers import BackgroundWorker, SimpleWorker
 
 log = logging.getLogger(__name__)
 
@@ -438,27 +438,24 @@ class BulletReviewPage(QWizardPage):
         self._progress.setVisible(True)
         self._progress_label.setVisible(True)
         self._progress.setValue(0)
-        self._progress.setMaximum(len(files) + (1 if library_path else 0))
+        self._progress.setMaximum(100)
         self._progress_label.setText("Preparing extraction...")
         self._bullet_list.clear()
         self._bullets = []
 
-        # Store references for the thread to update progress
-        self._extract_files = files
-        self._extract_library = library_path
-        self._extract_total = len(files) + (1 if library_path else 0)
-        self._extract_done = 0
         self._llm_available = False
         self._llm_error_msg = ""
 
-        def do_extract():
+        def do_extract(progress_callback):
             extracted = []
+
+            done = 0
 
             # Import existing library first
             if library_path:
-                self._update_progress(0, f"Importing library: {Path(library_path).name}")
+                progress_callback(0, f"Importing library: {Path(library_path).name}")
                 extracted.extend(self._parse_library_md(library_path))
-                self._extract_done += 1
+                done += 1
 
             if not files:
                 return extracted
@@ -493,20 +490,21 @@ class BulletReviewPage(QWizardPage):
                 llm = None
 
             if not llm:
-                self._update_progress(0, self._llm_error_msg)
+                progress_callback(0, self._llm_error_msg)
 
             for idx, fpath in enumerate(files):
                 filename = Path(fpath).name
                 method = "LLM" if llm else "text"
-                self._update_progress(
-                    self._extract_done + idx,
+                pct = int((done + idx) / (len(files) + done) * 100)
+                progress_callback(
+                    pct,
                     f"[{idx+1}/{len(files)}] Extracting ({method}): {filename}"
                 )
 
                 text = extract_text(fpath)
                 if not text:
-                    self._update_progress(
-                        self._extract_done + idx,
+                    progress_callback(
+                        pct,
                         f"[{idx+1}/{len(files)}] Skipped (no text): {filename}"
                     )
                     continue
@@ -534,8 +532,8 @@ class BulletReviewPage(QWizardPage):
                                     })
                     except Exception as exc:
                         log.exception("LLM extraction failed for %s", filename)
-                        self._update_progress(
-                            self._extract_done + idx,
+                        progress_callback(
+                            pct,
                             f"[{idx+1}/{len(files)}] LLM failed for {filename}, using text extraction..."
                         )
                         extracted.extend(self._smart_extract(text, filename))
@@ -568,24 +566,16 @@ class BulletReviewPage(QWizardPage):
             self._progress_label.setText(f"Extraction error: {err}")
             self._progress_label.setStyleSheet("color: #ef5350;")
 
-        worker = SimpleWorker(do_extract)
-        worker.finished.connect(on_done)
-        worker.error.connect(on_error)
+        def on_progress(pct, msg):
+            self._progress.setValue(pct)
+            self._progress_label.setText(msg)
+
+        worker = BackgroundWorker(do_extract, name="bullet_extract")
+        worker.signals.finished.connect(on_done)
+        worker.signals.error.connect(on_error)
+        worker.signals.progress.connect(on_progress)
         self._workers.append(worker)
         worker.start()
-
-    def _update_progress(self, current: int, message: str) -> None:
-        """Thread-safe progress update via signals."""
-        # QProgressBar.setValue and QLabel.setText are safe from threads
-        # when called through the main event loop, but for simplicity
-        # we call them directly (PySide6 handles cross-thread updates
-        # for these simple property sets)
-        try:
-            if self._progress.isVisible():
-                self._progress.setValue(current)
-            self._progress_label.setText(message)
-        except RuntimeError:
-            pass  # Widget deleted
 
     @staticmethod
     def _smart_extract(text: str, filename: str) -> list[dict]:
