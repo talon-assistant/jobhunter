@@ -563,14 +563,17 @@ class BulletReviewPage(QWizardPage):
 
         def on_error(err):
             self._progress.setVisible(False)
-            self._progress_label.setText(f"Extraction error: {err}")
+            self._progress_label.setVisible(True)
+            self._progress_label.setText(f"Extraction error:\n{err}")
             self._progress_label.setStyleSheet("color: #ef5350;")
+            self._progress_label.setWordWrap(True)
 
         def on_progress(pct, msg):
             self._progress.setValue(pct)
             self._progress_label.setText(msg)
 
-        worker = BackgroundWorker(do_extract, name="bullet_extract")
+        worker = BackgroundWorker(do_extract)
+        worker._name = "bullet_extract"
         worker.signals.finished.connect(on_done)
         worker.signals.error.connect(on_error)
         worker.signals.progress.connect(on_progress)
@@ -807,50 +810,75 @@ class LinkedInLoginPage(QWizardPage):
         self._status.setText("Checking for Chromium browser...")
         QApplication.processEvents()
 
-        # Check if Playwright Chromium is installed, offer to download
         try:
             from playwright.sync_api import sync_playwright
-            pw = sync_playwright().start()
-            try:
-                # Try to launch — this will fail if Chromium isn't installed
-                browser = pw.chromium.launch(headless=True)
-                browser.close()
-            except Exception:
-                pw.stop()
-                # Chromium not installed — offer to download
-                reply = QMessageBox.question(
-                    self, "Install Chromium",
-                    "Playwright Chromium browser is not installed.\n\n"
-                    "Download it now? (~150MB)\n\n"
-                    "This is needed for LinkedIn scraping.",
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                if reply == QMessageBox.Yes:
-                    self._status.setText("Downloading Chromium... this may take a minute.")
-                    QApplication.processEvents()
-                    result = subprocess.run(
-                        [sys.executable, "-m", "playwright", "install", "chromium"],
-                        capture_output=True, text=True,
-                    )
-                    if result.returncode != 0:
-                        self._status.setText("Failed to install Chromium. You can try later.")
-                        self._status.setStyleSheet("color: #ef5350;")
-                        self._btn_login.setEnabled(True)
-                        return
-                else:
-                    self._status.setText("Skipped. You can install Chromium later.")
-                    self._btn_login.setEnabled(True)
-                    return
-
-                pw = sync_playwright().start()
         except ImportError:
             self._status.setText("Playwright not installed. Skipping LinkedIn login.")
             self._status.setStyleSheet("color: #ef5350;")
             self._btn_login.setEnabled(True)
             return
 
+        # Check if Chromium is installed by trying to launch
+        chromium_ok = False
+        pw = sync_playwright().start()
+        try:
+            test_browser = pw.chromium.launch(headless=True)
+            test_browser.close()
+            chromium_ok = True
+        except Exception:
+            pw.stop()
+
+            # Chromium not installed — offer to download
+            reply = QMessageBox.question(
+                self, "Install Chromium",
+                "Playwright Chromium browser is not installed.\n\n"
+                "Download it now? (~150MB)\n\n"
+                "This is needed for LinkedIn scraping.",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                self._status.setText("Skipped. You can install Chromium later.")
+                self._btn_login.setEnabled(True)
+                return
+
+            self._status.setText("Downloading Chromium... this may take a minute.")
+            QApplication.processEvents()
+
+            # Use playwright's Python API to install, not subprocess
+            # (subprocess doesn't work in PyInstaller bundles)
+            try:
+                from playwright._impl._driver import compute_driver_executable
+                driver_exec = compute_driver_executable()
+                result = subprocess.run(
+                    [str(driver_exec), "install", "chromium"],
+                    capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    self._status.setText(
+                        f"Failed to install Chromium.\n{result.stderr[:200]}\n"
+                        "You can try manually: playwright install chromium"
+                    )
+                    self._status.setStyleSheet("color: #ef5350;")
+                    self._btn_login.setEnabled(True)
+                    return
+                chromium_ok = True
+            except Exception as exc:
+                self._status.setText(f"Failed to install Chromium: {exc}")
+                self._status.setStyleSheet("color: #ef5350;")
+                self._btn_login.setEnabled(True)
+                return
+
+            pw = sync_playwright().start()
+
+        if not chromium_ok:
+            self._btn_login.setEnabled(True)
+            return
+
         # Now do the actual login
-        self._status.setText("Opening browser... Log in to LinkedIn, then close the browser.")
+        self._status.setText(
+            "Opening browser...\n"
+            "Log in to LinkedIn, then CLOSE THE BROWSER WINDOW when done."
+        )
         QApplication.processEvents()
 
         try:
@@ -866,11 +894,12 @@ class LinkedInLoginPage(QWizardPage):
             page = browser.new_page()
             page.goto("https://www.linkedin.com/login")
 
-            try:
-                # Wait for user to close browser (up to 5 minutes)
-                page.wait_for_event("close", timeout=300000)
-            except Exception:
-                pass
+            # Wait for ALL pages to close (user closes the browser window)
+            while len(browser.pages) > 0:
+                try:
+                    browser.pages[-1].wait_for_event("close", timeout=300000)
+                except Exception:
+                    break
 
             try:
                 browser.close()
