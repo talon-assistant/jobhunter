@@ -1,4 +1,8 @@
-"""BGE embedding wrapper with cosine similarity utilities."""
+"""BGE embedding wrapper using fastembed (ONNX Runtime).
+
+Replaces sentence-transformers + PyTorch with a lightweight ONNX-based
+embedding library. Same BGE model, same vectors, ~30MB instead of ~800MB.
+"""
 
 from __future__ import annotations
 
@@ -20,12 +24,12 @@ _model = None
 
 
 def _get_model():
-    """Lazy-load the sentence-transformers model (CPU only)."""
+    """Lazy-load the fastembed model (downloads ONNX weights on first use)."""
     global _model
     if _model is None:
         log.info("Loading embedding model: %s", _MODEL_NAME)
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(_MODEL_NAME, device="cpu")
+        from fastembed import TextEmbedding
+        _model = TextEmbedding(model_name=_MODEL_NAME)
         log.info("Embedding model loaded (dim=%d)", _DIMENSION)
     return _model
 
@@ -33,17 +37,28 @@ def _get_model():
 def embed_text(text: str) -> NDArray[np.float32]:
     """Embed a single string, returning a normalized 768-dim vector."""
     model = _get_model()
-    vec = model.encode(text, normalize_embeddings=True)
-    return np.asarray(vec, dtype=np.float32)
+    # fastembed returns a generator, consume it
+    vecs = list(model.embed([text]))
+    vec = np.asarray(vecs[0], dtype=np.float32)
+    # Normalize
+    norm = np.linalg.norm(vec)
+    if norm > 0:
+        vec = vec / norm
+    return vec
 
 
 def embed_texts(texts: list[str], *, batch_size: int = 32) -> NDArray[np.float32]:
-    """Embed multiple strings, returning an (N, 768) matrix."""
+    """Embed multiple strings, returning an (N, 768) normalized matrix."""
     if not texts:
         return np.empty((0, _DIMENSION), dtype=np.float32)
     model = _get_model()
-    vecs = model.encode(texts, normalize_embeddings=True, batch_size=batch_size)
-    return np.asarray(vecs, dtype=np.float32)
+    vecs = list(model.embed(texts, batch_size=batch_size))
+    result = np.asarray(vecs, dtype=np.float32)
+    # Normalize each row
+    norms = np.linalg.norm(result, axis=1, keepdims=True)
+    norms = np.where(norms > 0, norms, 1.0)
+    result = result / norms
+    return result
 
 
 def cosine_similarity(a: NDArray[np.float32], b: NDArray[np.float32]) -> float:

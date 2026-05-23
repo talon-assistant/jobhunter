@@ -321,14 +321,14 @@ def _add_to_path(bin_dir: Path) -> None:
 
 
 def download_embedding_model() -> bool:
-    """Step 6: Pre-download the BGE embedding model."""
-    print(f"  Downloading {BGE_MODEL} (~440MB on first run)...")
-    print("  (This is the fast scoring model, not the LLM)")
+    """Pre-download the BGE embedding model (ONNX format via fastembed)."""
+    print(f"  Downloading {BGE_MODEL} ONNX model (~90MB on first run)...")
+    print("  (This is the fast scoring model for job matching)")
     try:
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer(BGE_MODEL, device="cpu")
-        vec = model.encode("test", normalize_embeddings=True)
-        print(f"  Model loaded and verified (dim={len(vec)})")
+        from fastembed import TextEmbedding
+        model = TextEmbedding(model_name=BGE_MODEL)
+        vecs = list(model.embed(["test"]))
+        print(f"  Model loaded and verified (dim={len(vecs[0])})")
         del model
         return True
     except Exception as exc:
@@ -510,13 +510,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def main() -> int:
     _print_header("JobHunter Setup")
 
-    total = 5
+    total = 4
     steps = [
         (1, "Checking Python version...", check_python),
-        (2, "Installing CPU-only PyTorch...", install_torch_cpu),
-        (3, "Installing project dependencies...", install_requirements),
-        (4, "Setting up Playwright + Chromium...", install_playwright),
-        (5, "Downloading embedding model...", download_embedding_model),
+        (2, "Installing project dependencies...", install_requirements),
+        (3, "Setting up Playwright + Chromium...", install_playwright),
+        (4, "Downloading embedding model...", download_embedding_model),
     ]
 
     failed = False
