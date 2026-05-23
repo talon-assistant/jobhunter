@@ -9,3 +9,5 @@ build/
 venv/
 *.db
 *.db-journal
+dist/
+build/
