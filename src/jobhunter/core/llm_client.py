@@ -17,6 +17,7 @@ import logging
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ class LLMClient:
         """Return True if the provider is reachable / configured."""
         try:
             if self.provider == "claude-cli":
-                return shutil.which("claude") is not None
+                return self._find_claude_binary() is not None
             elif self.provider == "anthropic":
                 return bool(self.api_key)
             elif self.provider == "openai":
@@ -158,13 +159,60 @@ class LLMClient:
     # Provider implementations
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _find_claude_binary() -> str | None:
+        """Find the claude CLI binary, checking PATH and known install locations."""
+        # 1. Check PATH first
+        found = shutil.which("claude")
+        if found:
+            return found
+
+        # 2. Check known install locations (Windows)
+        import os
+        home = Path.home()
+        candidates = [
+            home / ".local" / "bin" / "claude.exe",
+            home / ".local" / "bin" / "claude",
+            home / "AppData" / "Local" / "Programs" / "claude-code" / "claude.exe",
+            home / "AppData" / "Roaming" / "npm" / "claude.cmd",
+            home / "AppData" / "Roaming" / "npm" / "claude",
+        ]
+
+        # Also check versioned Claude Desktop installs
+        claude_roaming = home / "AppData" / "Roaming" / "Claude" / "claude-code"
+        if claude_roaming.exists():
+            # Find the latest version directory
+            versions = sorted(claude_roaming.iterdir(), reverse=True)
+            for v in versions:
+                candidates.append(v / "claude.exe")
+                candidates.append(v / "claude")
+
+        # Microsoft Store / UWP install path
+        packages_dir = home / "AppData" / "Local" / "Packages"
+        for pkg in packages_dir.glob("Claude_*/LocalCache/Roaming/Claude/claude-code/*"):
+            candidates.append(pkg / "claude.exe")
+
+        # macOS / Linux paths
+        candidates.extend([
+            Path("/usr/local/bin/claude"),
+            Path("/opt/homebrew/bin/claude"),
+        ])
+
+        for path in candidates:
+            if path.exists():
+                log.info("Found claude CLI at %s", path)
+                return str(path)
+
+        return None
+
     def _call_claude_cli(self, prompt: str, system_prompt: str) -> str:
         """Call ``claude -p`` subprocess."""
-        claude_bin = shutil.which("claude")
+        claude_bin = self._find_claude_binary()
         if not claude_bin:
             raise LLMError(
                 "Claude CLI not found. Install Claude Code: "
-                "https://docs.anthropic.com/en/docs/claude-code"
+                "https://docs.anthropic.com/en/docs/claude-code\n"
+                "Or check that it's in your PATH."
             )
 
         full_prompt = prompt

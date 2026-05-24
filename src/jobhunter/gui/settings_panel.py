@@ -155,8 +155,11 @@ class SettingsTab(QWidget):
 
         # Show CLI status for claude-cli
         if provider == "claude-cli":
-            has_cli = shutil.which("claude") is not None
-            self._test_result.setText("✓ Claude CLI found" if has_cli else "✗ Claude CLI not found")
+            found = LLMClient._find_claude_binary()
+            if found:
+                self._test_result.setText(f"✓ Claude CLI found: {found}")
+            else:
+                self._test_result.setText("✗ Claude CLI not found")
             self._test_result.setStyleSheet(
                 "color: #81c784;" if has_cli else "color: #ef5350;"
             )

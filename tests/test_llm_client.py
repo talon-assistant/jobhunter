@@ -32,17 +32,17 @@ def test_default_models():
 
 
 def test_claude_cli_healthy_when_found(claude_client):
-    with patch("jobhunter.core.llm_client.shutil.which", return_value="/usr/bin/claude"):
+    with patch.object(LLMClient, "_find_claude_binary", return_value="/usr/bin/claude"):
         assert claude_client.is_healthy() is True
 
 
 def test_claude_cli_unhealthy_when_missing(claude_client):
-    with patch("jobhunter.core.llm_client.shutil.which", return_value=None):
+    with patch.object(LLMClient, "_find_claude_binary", return_value=None):
         assert claude_client.is_healthy() is False
 
 
 def test_claude_cli_generate_text(claude_client):
-    with patch("jobhunter.core.llm_client.shutil.which", return_value="/usr/bin/claude"):
+    with patch.object(LLMClient, "_find_claude_binary", return_value="/usr/bin/claude"):
         with patch("jobhunter.core.llm_client.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0, stdout="Hello world", stderr=""
@@ -54,7 +54,7 @@ def test_claude_cli_generate_text(claude_client):
 
 def test_claude_cli_missing_raises():
     client = LLMClient(provider="claude-cli")
-    with patch("jobhunter.core.llm_client.shutil.which", return_value=None):
+    with patch.object(LLMClient, "_find_claude_binary", return_value=None):
         with pytest.raises(LLMError, match="Claude CLI not found"):
             client.generate_text("test")
 

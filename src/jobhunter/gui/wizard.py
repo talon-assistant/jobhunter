@@ -149,9 +149,13 @@ class ProviderPage(QWizardPage):
         self._endpoint_group.setVisible(provider == "openai-compatible")
 
         if provider == "claude-cli":
-            has_cli = shutil.which("claude") is not None
-            self._test_label.setText("Claude CLI found" if has_cli else "Claude CLI not found — install Claude Code first")
-            self._test_label.setStyleSheet("color: #81c784;" if has_cli else "color: #ef5350;")
+            found = LLMClient._find_claude_binary()
+            if found:
+                self._test_label.setText(f"✓ Claude CLI found: {found}")
+                self._test_label.setStyleSheet("color: #81c784;")
+            else:
+                self._test_label.setText("✗ Claude CLI not found — install Claude Code first")
+                self._test_label.setStyleSheet("color: #ef5350;")
 
     def _on_test(self) -> None:
         provider = self._selected_provider()
