@@ -219,6 +219,11 @@ class LLMClient:
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n{prompt}"
 
+        # CREATE_NO_WINDOW prevents a CMD flash on Windows
+        creationflags = 0
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags = subprocess.CREATE_NO_WINDOW
+
         try:
             result = subprocess.run(
                 [claude_bin, "-p", "--output-format", "text"],
@@ -227,6 +232,7 @@ class LLMClient:
                 text=True,
                 encoding="utf-8",
                 timeout=self.timeout,
+                creationflags=creationflags,
             )
         except subprocess.TimeoutExpired as exc:
             raise LLMError(f"Claude CLI timed out after {self.timeout}s") from exc

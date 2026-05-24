@@ -848,18 +848,32 @@ class LinkedInLoginPage(QWizardPage):
             self._status.setText("Downloading Chromium... this may take a minute.")
             QApplication.processEvents()
 
-            # Use playwright's Python API to install, not subprocess
-            # (subprocess doesn't work in PyInstaller bundles)
+            # Use playwright's internal node + cli.js to install
+            # compute_driver_executable() returns (node_exe, cli_js)
             try:
                 from playwright._impl._driver import compute_driver_executable
-                driver_exec = compute_driver_executable()
+                driver_info = compute_driver_executable()
+
+                # Handle both tuple (node, cli.js) and single path formats
+                if isinstance(driver_info, tuple):
+                    node_exe, cli_js = driver_info
+                    cmd = [str(node_exe), str(cli_js), "install", "chromium"]
+                else:
+                    cmd = [str(driver_info), "install", "chromium"]
+
+                creationflags = 0
+                if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                    creationflags = subprocess.CREATE_NO_WINDOW
+
                 result = subprocess.run(
-                    [str(driver_exec), "install", "chromium"],
+                    cmd,
                     capture_output=True, text=True,
+                    creationflags=creationflags,
+                    timeout=300,
                 )
                 if result.returncode != 0:
                     self._status.setText(
-                        f"Failed to install Chromium.\n{result.stderr[:200]}\n"
+                        f"Failed to install Chromium.\n{result.stderr[:300]}\n"
                         "You can try manually: playwright install chromium"
                     )
                     self._status.setStyleSheet("color: #ef5350;")
