@@ -416,8 +416,8 @@ class BulletReviewPage(QWizardPage):
         """Called when the page is shown — extract bullets from files."""
         wizard = self.wizard()
         import_page = None
-        for i in range(wizard.pageCount()):
-            page = wizard.page(i)
+        for pid in wizard.pageIds():
+            page = wizard.page(pid)
             if isinstance(page, ResumeImportPage):
                 import_page = page
                 break
