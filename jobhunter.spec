@@ -113,7 +113,7 @@ excludes = [
     "matplotlib",
     "scipy",
     "pandas",
-    "PIL",
+    # "PIL",  # Required by fastembed
     "tkinter",
     "unittest",
     "test",
