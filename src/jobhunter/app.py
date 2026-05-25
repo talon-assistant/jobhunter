@@ -209,7 +209,7 @@ def _process_wizard_results(config: Config, wizard) -> None:
 
     app_dir = config.path.parent
 
-    pages = [wizard.page(i) for i in range(wizard.pageCount())]
+    pages = [wizard.page(pid) for pid in wizard.pageIds()]
 
     # Save reviewed bullets to resume DB
     for page in pages:
