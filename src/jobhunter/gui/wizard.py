@@ -809,10 +809,26 @@ class LinkedInLoginPage(QWizardPage):
         layout.addWidget(self._status)
         layout.addStretch()
 
+    @staticmethod
+    def _ensure_playwright_browsers_path():
+        """Set PLAYWRIGHT_BROWSERS_PATH to a user-writable location.
+
+        PyInstaller bundles Playwright's driver inside _internal/, but
+        browsers can't live there (read-only, wrong structure). Point
+        Playwright to a stable user-local cache directory instead.
+        """
+        import os
+        if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+            cache_dir = str(Path.home() / ".jobhunter" / "playwright-browsers")
+            os.makedirs(cache_dir, exist_ok=True)
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = cache_dir
+
     def _on_login(self) -> None:
         self._btn_login.setEnabled(False)
         self._status.setText("Checking for Chromium browser...")
         QApplication.processEvents()
+
+        self._ensure_playwright_browsers_path()
 
         try:
             from playwright.sync_api import sync_playwright

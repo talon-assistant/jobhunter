@@ -264,6 +264,14 @@ class Scraper:
         if self._browser:
             return self._browser
 
+        # Ensure browsers are in a user-writable location (not inside _internal/)
+        import os
+        if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+            from pathlib import Path
+            cache_dir = str(Path.home() / ".jobhunter" / "playwright-browsers")
+            os.makedirs(cache_dir, exist_ok=True)
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = cache_dir
+
         from playwright.sync_api import sync_playwright
 
         self._playwright = sync_playwright().start()
