@@ -942,6 +942,18 @@ class LinkedInLoginPage(QWizardPage):
                 except Exception:
                     break
 
+            # Check whether a LinkedIn session actually exists before
+            # reporting success — the li_at cookie is the auth token
+            logged_in = False
+            try:
+                cookies = browser.cookies()
+                logged_in = any(
+                    c.get("name") == "li_at" and "linkedin" in c.get("domain", "")
+                    for c in cookies
+                )
+            except Exception:
+                pass
+
             try:
                 browser.close()
             except Exception:
@@ -949,8 +961,16 @@ class LinkedInLoginPage(QWizardPage):
             pw.stop()
 
             vault.lock()
-            self._status.setText("LinkedIn session saved and encrypted!")
-            self._status.setStyleSheet("color: #81c784;")
+            if logged_in:
+                self._status.setText("✓ LinkedIn login detected — session saved and encrypted.")
+                self._status.setStyleSheet("color: #81c784;")
+            else:
+                self._status.setText(
+                    "Browser closed, but no LinkedIn login was detected. "
+                    "Click the button to try again, or skip — you can log in "
+                    "later. LinkedIn scraping won't work until you do."
+                )
+                self._status.setStyleSheet("color: #ffb74d;")
         except Exception as exc:
             self._status.setText(f"Login failed: {exc}")
             self._status.setStyleSheet("color: #ef5350;")
@@ -1034,4 +1054,39 @@ class FinishPage(QWizardPage):
             "</ul>"
             "<p>Click Finish to start.</p>"
         ))
+        self._warnings = QLabel("")
+        self._warnings.setWordWrap(True)
+        self._warnings.setStyleSheet("color: #ffb74d;")
+        layout.addWidget(self._warnings)
         layout.addStretch()
+
+    def initializePage(self) -> None:
+        """Surface anything the user skipped so setup doesn't end broken."""
+        wizard = self.wizard()
+        bullets = 0
+        urls = 0
+        for pid in wizard.pageIds():
+            page = wizard.page(pid)
+            if isinstance(page, BulletReviewPage):
+                bullets = len(page.get_bullets())
+            elif isinstance(page, FirstSearchPage):
+                urls = len(page.get_generated_urls())
+
+        warnings = []
+        if bullets == 0:
+            warnings.append(
+                "• No resume bullets were imported — resume tailoring and "
+                "cover letters need them. Import resumes from the Resume "
+                "Library tab."
+            )
+        if urls == 0:
+            warnings.append(
+                "• No search URLs were created — 'Run Search' will have "
+                "nothing to do. Add searches in the Search URLs tab."
+            )
+        if warnings:
+            self._warnings.setText(
+                "<b>Before you rely on it:</b><br>" + "<br>".join(warnings)
+            )
+        else:
+            self._warnings.setText("")

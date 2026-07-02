@@ -59,6 +59,28 @@ def test_claude_cli_missing_raises():
             client.generate_text("test")
 
 
+def test_claude_cli_error_surfaces_stdout(claude_client):
+    """claude -p writes many errors to stdout, not stderr — the error
+    message must include them or failures look blank."""
+    with patch.object(LLMClient, "_find_claude_binary", return_value="/usr/bin/claude"):
+        with patch("jobhunter.core.llm_client.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1, stdout="Error: rate limit exceeded", stderr=""
+            )
+            with pytest.raises(LLMError, match="rate limit exceeded"):
+                claude_client.generate_text("test")
+
+
+def test_claude_cli_error_prefers_stderr(claude_client):
+    with patch.object(LLMClient, "_find_claude_binary", return_value="/usr/bin/claude"):
+        with patch("jobhunter.core.llm_client.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1, stdout="partial output", stderr="fatal: bad flag"
+            )
+            with pytest.raises(LLMError, match="fatal: bad flag"):
+                claude_client.generate_text("test")
+
+
 def test_openai_compat_generate_text(openai_compat_client):
     mock_response = MagicMock(
         status_code=200,

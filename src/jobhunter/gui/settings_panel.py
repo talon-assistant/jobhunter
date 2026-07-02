@@ -161,7 +161,7 @@ class SettingsTab(QWidget):
             else:
                 self._test_result.setText("✗ Claude CLI not found")
             self._test_result.setStyleSheet(
-                "color: #81c784;" if has_cli else "color: #ef5350;"
+                "color: #81c784;" if found else "color: #ef5350;"
             )
 
     def _on_test_connection(self) -> None:

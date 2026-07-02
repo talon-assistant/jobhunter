@@ -10,7 +10,7 @@ A setup wizard walks you through provider selection, resume import, and LinkedIn
 
 ## Features
 
-- **Job Dashboard** — Scrape, track, and score job listings from LinkedIn, Dice, Built In, Glassdoor, and generic ATS pages
+- **Job Dashboard** — Scrape, track, and score job listings from LinkedIn, Dice, Built In, and generic ATS pages
 - **Two-Phase Scoring** — Fast BGE embedding similarity for all jobs, deep LLM analysis for top candidates
 - **Resume Library** — Build a fabrication-proof bullet library from your existing resumes. Bulk import, deduplication, LLM-assisted refinement
 - **Resume Tailoring** — Index-based bullet selection (the AI picks from your library, never generates fake content)
@@ -79,9 +79,11 @@ All settings are configurable through the **Settings tab** in the app. No config
 - **AI Provider**: provider, model, API key (stored in OS keyring)
 - **Resume Header**: name, email, phone, location
 - **Resume Template**: Classic, Modern, Executive, or Compact
-- **Scoring Thresholds**: fast/deep thresholds, auto-archive cutoff
+- **Scoring Thresholds**: deep analysis threshold, auto-archive cutoff
 - **Cover Letter Style**: tone and formatting rules
 - **Scraping**: enabled boards, delays
+
+Note: Glassdoor is not enabled by default — it sits behind Cloudflare bot protection that blocks plain HTTP scraping. LinkedIn, Dice, and Built In are the supported boards.
 
 ## Building the Executable
 
@@ -99,7 +101,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-73 tests covering the LLM client, job database, resume database, scoring, document generation, and extraction.
+79 tests covering the LLM client, job database, resume database, scoring, JD sanitization, document generation, and extraction.
 
 ## Architecture
 

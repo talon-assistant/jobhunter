@@ -8,7 +8,6 @@
         "timeout": 300
     },
     "scoring": {
-        "fast_threshold": 40,
         "deep_threshold": 50,
         "batch_size": 2,
         "jd_max_chars": 1500,
@@ -17,7 +16,7 @@
     "scraping": {
         "linkedin_profile_dir": "",
         "scrape_delay": 4,
-        "enabled_boards": ["linkedin", "dice", "builtin", "glassdoor"]
+        "enabled_boards": ["linkedin", "dice", "builtin"]
     },
     "resume": {
         "name": "",

@@ -95,6 +95,10 @@ class DashboardTab(QWidget):
         btn_search.clicked.connect(self._on_run_search)
         top.addWidget(btn_search)
 
+        btn_score = QPushButton("Score Unscored")
+        btn_score.clicked.connect(self._on_score_unscored)
+        top.addWidget(btn_score)
+
         layout.addLayout(top)
 
         # -- Filter bar --
@@ -326,23 +330,33 @@ class DashboardTab(QWidget):
         self._set_status("Scraping URL...")
 
         def do_scrape():
-            posting = self.scraper.scrape_posting(url)
-            if not posting:
-                raise Exception("Could not scrape job details")
-            app_id = self.db.add_application(
-                company=posting.company, position=posting.position,
-                location=posting.location, source=posting.source,
-                url=posting.url, jd_text=posting.jd_text,
-            )
-            if self.resume_text and posting.jd_text:
-                scored = self.scorer.score_fast(self.resume_text, [{
-                    "company": posting.company, "position": posting.position,
-                    "location": posting.location, "url": posting.url,
-                    "jd_text": posting.jd_text, "source": posting.source,
-                }])
-                if scored:
-                    self.db.update_application(app_id, fit_score=scored[0].fit_score)
-            return posting
+            try:
+                posting = self.scraper.scrape_posting(url)
+                if not posting:
+                    raise Exception("Could not scrape job details")
+                app_id = self.db.add_application(
+                    company=posting.company, position=posting.position,
+                    location=posting.location, source=posting.source,
+                    url=posting.url, jd_text=posting.jd_text,
+                )
+                if self.resume_text and posting.jd_text:
+                    scored = self.scorer.score_all(self.resume_text, [{
+                        "company": posting.company, "position": posting.position,
+                        "location": posting.location, "url": posting.url,
+                        "jd_text": posting.jd_text, "source": posting.source,
+                    }])
+                    if scored:
+                        fields = scored[0].to_db_fields()
+                        # No auto-archive here — the user explicitly added this job
+                        self.db.update_application(
+                            app_id,
+                            fit_score=fields["fit_score"],
+                            fit_analysis=fields["fit_analysis"],
+                            jd_embedding=fields["jd_embedding"],
+                        )
+                return posting
+            finally:
+                self.scraper.close()
 
         worker = SimpleWorker(do_scrape)
         worker.finished.connect(lambda r: (self.refresh(), self._set_status(f"Added: {r.company} — {r.position}")))
@@ -359,23 +373,127 @@ class DashboardTab(QWidget):
         self._set_status(f"Searching {len(urls)} URL(s)...")
 
         def do_search():
-            jobs = self.scraper.scrape_all(urls)
-            new_count = 0
-            for j in jobs:
-                if not self.db.url_exists(j.url):
-                    self.db.add_application(
-                        company=j.company, position=j.position,
-                        location=j.location, source=j.source,
-                        url=j.url, jd_text=j.jd_text,
-                    )
-                    new_count += 1
-            return new_count
+            try:
+                jobs = self.scraper.scrape_all(urls)
+                for u in urls:
+                    self.db.update_search_url_scraped(u["id"])
+                new_ids = []
+                for j in jobs:
+                    if not self.db.url_exists(j.url):
+                        app_id = self.db.add_application(
+                            company=j.company, position=j.position,
+                            location=j.location, source=j.source,
+                            url=j.url, jd_text=j.jd_text,
+                        )
+                        new_ids.append(app_id)
+                scored, archived = self._fetch_and_score(new_ids)
+                return len(new_ids), scored, archived
+            finally:
+                self.scraper.close()
+
+        def on_done(result):
+            new_count, scored, archived = result
+            self.refresh()
+            msg = f"Found {new_count} new jobs"
+            if scored:
+                msg += f", scored {scored}"
+            if archived:
+                msg += f", auto-archived {archived} low-fit"
+            self._set_status(msg)
 
         worker = SimpleWorker(do_search)
-        worker.finished.connect(lambda n: (self.refresh(), self._set_status(f"Found {n} new jobs")))
+        worker.finished.connect(on_done)
         worker.error.connect(lambda e: QMessageBox.warning(self, "Search Error", e))
         self._workers.append(worker)
         worker.start()
+
+    def _on_score_unscored(self) -> None:
+        """Fetch missing JDs and run two-phase scoring on unscored jobs."""
+        if not self.resume_text:
+            QMessageBox.information(
+                self, "No Resume",
+                "Import your resumes first (Resume Library tab) so jobs can "
+                "be scored against them.",
+            )
+            return
+
+        apps = self.db.list_applications(include_archived=False)
+        ids = [a["id"] for a in apps if not a.get("fit_score")]
+        if not ids:
+            self._set_status("No unscored jobs")
+            return
+
+        self._set_status(f"Scoring {len(ids)} unscored job(s)... this can take a while")
+
+        def do_score():
+            try:
+                return self._fetch_and_score(ids)
+            finally:
+                self.scraper.close()
+
+        def on_done(result):
+            scored, archived = result
+            self.refresh()
+            msg = f"Scored {scored} job(s)"
+            if archived:
+                msg += f", auto-archived {archived} low-fit"
+            self._set_status(msg)
+
+        worker = SimpleWorker(do_score)
+        worker.finished.connect(on_done)
+        worker.error.connect(lambda e: QMessageBox.warning(self, "Scoring Error", e))
+        self._workers.append(worker)
+        worker.start()
+
+    def _fetch_and_score(self, app_ids: list[int]) -> tuple[int, int]:
+        """Fetch missing JDs, run fast + deep scoring, auto-archive low fits.
+
+        Runs on a worker thread. Returns (scored_count, archived_count).
+        """
+        if not self.resume_text or not app_ids:
+            return 0, 0
+
+        jobs: list[dict] = []
+        id_by_url: dict[str, int] = {}
+        for app_id in app_ids:
+            app = self.db.get_application(app_id)
+            if not app or not app.get("url"):
+                continue
+            jd = app.get("jd_text", "")
+            if not jd:
+                posting = self.scraper.scrape_posting(app["url"])
+                if posting and posting.jd_text:
+                    jd = posting.jd_text
+                    self.db.update_application(app_id, jd_text=jd)
+            if not jd:
+                continue
+            jobs.append({
+                "company": app["company"], "position": app["position"],
+                "location": app.get("location", ""), "url": app["url"],
+                "jd_text": jd, "source": app.get("source", ""),
+            })
+            id_by_url[app["url"]] = app_id
+
+        if not jobs:
+            return 0, 0
+
+        scored = self.scorer.score_all(self.resume_text, jobs)
+        archived = 0
+        for s in scored:
+            app_id = id_by_url.get(s.url)
+            if app_id is None:
+                continue
+            fields = s.to_db_fields()
+            self.db.update_application(
+                app_id,
+                fit_score=fields["fit_score"],
+                fit_analysis=fields["fit_analysis"],
+                jd_embedding=fields["jd_embedding"],
+            )
+            if self.scorer.should_auto_archive(s):
+                self.db.update_application(app_id, status="archived")
+                archived += 1
+        return len(jobs), archived
 
     def _on_prepare_all(self) -> None:
         self._generate_materials(resume=True, letter=True)

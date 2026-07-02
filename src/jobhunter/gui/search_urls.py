@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QListWidget, QListWidgetItem,
-    QCheckBox, QMessageBox,
+    QCheckBox, QMenu, QMessageBox,
 )
 
 from jobhunter.core.job_db import JobDB
@@ -58,7 +58,13 @@ class SearchURLsTab(QWidget):
 
         # URL list
         self._list = QListWidget()
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._list)
+
+        hint = QLabel("Right-click a URL to enable/disable or delete it.")
+        hint.setProperty("dim", True)
+        layout.addWidget(hint)
 
     def _refresh(self) -> None:
         self._list.clear()
@@ -83,9 +89,35 @@ class SearchURLsTab(QWidget):
 
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, uid)
+            item.setData(Qt.UserRole + 1, enabled)
             self._list.addItem(item)
 
-        # Context menu would go here in a polish pass
+    def _on_context_menu(self, pos) -> None:
+        item = self._list.itemAt(pos)
+        if not item or item.data(Qt.UserRole) is None:
+            return
+        uid = item.data(Qt.UserRole)
+        enabled = bool(item.data(Qt.UserRole + 1))
+
+        menu = QMenu(self)
+        toggle_action = menu.addAction("Disable" if enabled else "Enable")
+        delete_action = menu.addAction("Delete")
+
+        action = menu.exec(self._list.mapToGlobal(pos))
+        if action is toggle_action:
+            self.db.toggle_search_url(uid, not enabled)
+            self._refresh()
+            self._set_status(f"Search URL {'disabled' if enabled else 'enabled'}")
+        elif action is delete_action:
+            reply = QMessageBox.question(
+                self, "Delete Search URL",
+                "Delete this search URL? Jobs already found from it are kept.",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes:
+                self.db.delete_search_url(uid)
+                self._refresh()
+                self._set_status("Search URL deleted")
 
     def _on_add(self) -> None:
         url = self._url_input.text().strip()

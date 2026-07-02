@@ -61,14 +61,12 @@ class FitScorer:
         self,
         llm_client: LLMClient | None = None,
         *,
-        fast_threshold: int = 40,
         deep_threshold: int = 50,
         batch_size: int = 2,
         jd_max_chars: int = 1500,
         auto_archive_below: int = 30,
     ) -> None:
         self.llm = llm_client
-        self.fast_threshold = fast_threshold
         self.deep_threshold = deep_threshold
         self.batch_size = batch_size
         self.jd_max_chars = jd_max_chars
@@ -97,7 +95,16 @@ class FitScorer:
         for job in jobs:
             jd = job.get("jd_text", "")
             if not jd.strip():
-                results.append(ScoredJob(**job, fast_score=0.0, fit_score=0))
+                results.append(ScoredJob(
+                    company=job.get("company", ""),
+                    position=job.get("position", ""),
+                    location=job.get("location", ""),
+                    url=job.get("url", ""),
+                    source=job.get("source", ""),
+                    jd_text="",
+                    fast_score=0.0,
+                    fit_score=0,
+                ))
                 continue
 
             jd_vec = embeddings.embed_text(jd)
@@ -161,6 +168,16 @@ class FitScorer:
         """Run both fast and deep scoring phases."""
         scored = self.score_fast(resume_text, jobs)
         return self.score_deep(resume_text, scored)
+
+    def should_auto_archive(self, job: ScoredJob) -> bool:
+        """True if a scored job falls below the auto-archive cutoff.
+
+        Only archives jobs that actually have a JD — a job with no
+        description scores 0 for lack of data, not lack of fit.
+        """
+        if self.auto_archive_below <= 0:
+            return False
+        return bool(job.jd_text.strip()) and job.fit_score < self.auto_archive_below
 
     # ------------------------------------------------------------------
     # Internals

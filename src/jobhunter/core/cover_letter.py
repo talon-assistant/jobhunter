@@ -12,10 +12,14 @@ log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "cover_letter.txt"
 
-# Strings that indicate the LLM failed or leaked tool-call artifacts
+# Strings that indicate the LLM failed or leaked tool-call artifacts.
+# Keep these narrow: a bare word like "permission" appears in legitimate
+# letters (e.g. "permissions management" in security roles).
 _BAD_MARKERS = [
     "webfetch",
-    "permission",
+    "permission denied",
+    "requesting permission",
+    "needs your permission",
     "tool call",
     "tool_call",
     "[your name]",

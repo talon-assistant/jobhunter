@@ -86,7 +86,6 @@ class MainWindow(QMainWindow):
 
         self.fit_scorer = FitScorer(
             self.llm_client,
-            fast_threshold=self.config.get("scoring.fast_threshold", 40),
             deep_threshold=self.config.get("scoring.deep_threshold", 50),
             batch_size=self.config.get("scoring.batch_size", 2),
             jd_max_chars=self.config.get("scoring.jd_max_chars", 1500),

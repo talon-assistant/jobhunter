@@ -1,13 +1,14 @@
 """Multi-board job scraper: Playwright for LinkedIn, requests+BS4 for others.
 
 All scraped job descriptions are run through jd_sanitizer before being
-returned, stripping prompt injections before they ever reach the DB or LLM.
+returned, neutralizing prompt injections before they ever reach the DB or LLM.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,33 +74,55 @@ class Scraper:
     ) -> None:
         self.linkedin_profile_dir = linkedin_profile_dir
         self.scrape_delay = scrape_delay
-        self.enabled_boards = enabled_boards or ["linkedin", "dice", "builtin", "glassdoor"]
+        # Glassdoor is intentionally not a default: Cloudflare blocks plain
+        # HTTP scraping. Users can still enable it manually.
+        self.enabled_boards = enabled_boards or ["linkedin", "dice", "builtin"]
 
         # Profile vault for encrypted LinkedIn session storage
         from jobhunter.core.profile_vault import ProfileVault
         vdir = vault_dir or str(Path.home() / ".jobhunter")
         self._vault = ProfileVault(vdir)
 
+        # Playwright's sync API is bound to the thread that created it, and
+        # workers run on separate QThreads. Serialize all scraping so the
+        # browser is created, used, and closed within one thread at a time.
+        self._lock = threading.RLock()
+
+    def close(self) -> None:
+        """Close the browser and re-encrypt the LinkedIn profile.
+
+        Callers that scrape multiple postings should call this once after
+        the batch, not per posting — launching Chromium and re-encrypting
+        the vault are both expensive.
+        """
+        with self._lock:
+            self._close_playwright()
+
     def scrape_url(self, url: str) -> list[ScrapedJob]:
         """Scrape a single URL and return job listings."""
-        board = detect_board(url)
+        with self._lock:
+            board = detect_board(url)
 
-        if board == "linkedin":
-            return self._scrape_linkedin(url)
-        elif board == "dice":
-            return self._scrape_dice(url)
-        elif board == "builtin":
-            return self._scrape_builtin(url)
-        elif board == "glassdoor":
-            return self._scrape_generic(url, source="glassdoor")
-        else:
-            return self._scrape_generic(url, source="other")
+            if board == "linkedin":
+                return self._scrape_linkedin(url)
+            elif board == "dice":
+                return self._scrape_dice(url)
+            elif board == "builtin":
+                return self._scrape_builtin(url)
+            elif board == "glassdoor":
+                return self._scrape_generic(url, source="glassdoor")
+            else:
+                return self._scrape_generic(url, source="other")
 
     def scrape_all(self, search_urls: list[dict]) -> list[ScrapedJob]:
         """Scrape all configured search URLs.
 
         Each entry should have 'url' and 'board' keys.
         """
+        with self._lock:
+            return self._scrape_all_locked(search_urls)
+
+    def _scrape_all_locked(self, search_urls: list[dict]) -> list[ScrapedJob]:
         all_jobs: list[ScrapedJob] = []
 
         # Group by board type: LinkedIn uses Playwright, others use requests
@@ -135,8 +158,14 @@ class Scraper:
     def scrape_posting(self, url: str) -> ScrapedJob | None:
         """Scrape a single job posting page for its details.
 
-        The returned JD text is sanitized to strip prompt injections.
+        The returned JD text is sanitized to neutralize prompt injections.
+        The browser is kept alive between calls — callers fetching a batch
+        of postings must call close() when done.
         """
+        with self._lock:
+            return self._scrape_posting_locked(url)
+
+    def _scrape_posting_locked(self, url: str) -> ScrapedJob | None:
         board = detect_board(url)
 
         if board == "linkedin":
@@ -401,8 +430,6 @@ class Scraper:
                 )
         except Exception:
             log.exception("Failed to scrape LinkedIn posting")
-        finally:
-            self._close_playwright()
         return None
 
 

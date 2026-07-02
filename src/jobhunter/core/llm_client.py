@@ -240,8 +240,15 @@ class LLMClient:
             raise LLMError("Claude CLI binary not found") from exc
 
         if result.returncode != 0:
-            stderr = result.stderr[:500] if result.stderr else ""
-            raise LLMError(f"Claude CLI failed (exit {result.returncode}): {stderr}")
+            # claude -p writes many errors to stdout, not stderr — surface both
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            detail = stderr or stdout or "(no output)"
+            log.error(
+                "Claude CLI failed (exit %d). stderr: %s | stdout: %s",
+                result.returncode, stderr[:500], stdout[:500],
+            )
+            raise LLMError(f"Claude CLI failed (exit {result.returncode}): {detail[:500]}")
 
         text = result.stdout.strip()
         if not text:
