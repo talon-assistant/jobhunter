@@ -355,56 +355,79 @@ class ResumeLibraryTab(QWidget):
         self._set_status(f"Importing {len(files)} file(s)...")
 
         def do_import():
-            count = 0
+            from jobhunter.core.bullet_extract import extract_bullets
+
+            added = 0
+            extracted = 0
+            skipped_dupes = 0
+            methods: set[str] = set()
+            problems: list[str] = []
+
             for fpath in files:
+                filename = Path(fpath).name
                 text = extract_text(fpath)
                 if not text:
+                    problems.append(f"{filename}: no text could be read from the file")
                     continue
-                filename = Path(fpath).name
-                if self.llm:
-                    try:
-                        prompt = self._extract_prompt.replace("{{DOCUMENT}}", text[:8000])
-                        prompt = prompt.replace("{{FILENAME}}", filename)
-                        result = self.llm.generate_json(
-                            prompt,
-                            {"type": "object", "properties": {"roles": {"type": "array"}}},
-                            system_prompt="You are a resume parser. Extract bullets exactly as written.",
-                        )
-                        roles = result.get("roles", []) if isinstance(result, dict) else []
-                        for role in roles:
-                            section = role.get("section", "experience")
-                            role_name = role.get("role", "")
-                            for bullet in role.get("bullets", []):
-                                bullet = bullet.strip()
-                                if bullet and len(bullet) > 10:
-                                    dupes = self.db.find_duplicates(bullet, threshold=0.92)
-                                    if not dupes:
-                                        self.db.add_bullet(section, bullet, role=role_name, source_file=filename)
-                                        count += 1
-                    except LLMError:
-                        log.exception("LLM extraction failed for %s", filename)
-                else:
-                    for line in text.splitlines():
-                        line = line.strip()
-                        if line.startswith(("- ", "* ", "o ")):
-                            bullet = line.lstrip("-*o ").strip()
-                            if bullet and len(bullet) > 15:
-                                dupes = self.db.find_duplicates(bullet, threshold=0.92)
-                                if not dupes:
-                                    section = self._selected_section or "experience"
-                                    self.db.add_bullet(section, bullet, source_file=filename)
-                                    count += 1
-            return count
 
-        def on_done(count):
+                bullets, method = extract_bullets(self.llm, text, filename)
+                methods.add(method)
+                if method.startswith("text (llm failed"):
+                    problems.append(f"{filename}: {method[len('text ('):-1]}")
+
+                if not bullets:
+                    problems.append(f"{filename}: no bullets found")
+                    continue
+
+                for b in bullets:
+                    extracted += 1
+                    dupes = self.db.find_duplicates(b["text"], threshold=0.92)
+                    if dupes:
+                        skipped_dupes += 1
+                        continue
+                    self.db.add_bullet(
+                        b["section"], b["text"],
+                        role=b.get("role", ""),
+                        source_file=filename,
+                    )
+                    added += 1
+
+            return {
+                "added": added,
+                "extracted": extracted,
+                "skipped_dupes": skipped_dupes,
+                "methods": methods,
+                "problems": problems,
+            }
+
+        def on_done(result):
             self._refresh_sections()
             self._refresh_bullets()
-            self._set_status(f"Imported {count} new bullets")
-            QMessageBox.information(self, "Import Complete", f"Added {count} new bullets")
+            added = result["added"]
+            self._set_status(f"Imported {added} new bullets")
+
+            lines = [f"Added {added} new bullet(s)."]
+            if result["skipped_dupes"]:
+                lines.append(f"Skipped {result['skipped_dupes']} duplicate(s) already in your library.")
+            if result["extracted"] == 0:
+                lines.append("\nNo bullets were extracted from the file(s).")
+            if result["problems"]:
+                lines.append("\nDetails:")
+                lines.extend(f"  • {p}" for p in result["problems"])
+            if any("llm failed" in m for m in result["methods"]):
+                lines.append(
+                    "\nThe AI provider couldn't be reached, so plain-text extraction "
+                    "was used. Check your provider in Settings for higher-quality results."
+                )
+
+            if added > 0 and not result["problems"]:
+                QMessageBox.information(self, "Import Complete", "\n".join(lines))
+            else:
+                QMessageBox.warning(self, "Import Complete", "\n".join(lines))
 
         worker = SimpleWorker(do_import)
         worker.finished.connect(on_done)
-        worker.error.connect(lambda e: QMessageBox.warning(self, "Error", e))
+        worker.error.connect(lambda e: QMessageBox.warning(self, "Import Error", e))
         self._workers.append(worker)
         worker.start()
 

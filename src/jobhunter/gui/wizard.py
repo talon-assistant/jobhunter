@@ -588,81 +588,11 @@ class BulletReviewPage(QWizardPage):
     def _smart_extract(text: str, filename: str) -> list[dict]:
         """Extract bullet-like lines from resume text without an LLM.
 
-        Handles multiple formats:
-        - Markdown bullets (- , * )
-        - Unicode bullets (bullet, arrow, diamond, etc.)
-        - Lines that start with action verbs (Led, Built, Managed, etc.)
-        - Numbered list items
+        Delegates to the shared core extractor so the wizard and the Resume
+        Library import behave identically.
         """
-        import re
-
-        ACTION_VERBS = {
-            "led", "managed", "built", "developed", "designed", "implemented",
-            "created", "launched", "directed", "established", "delivered",
-            "reduced", "increased", "improved", "achieved", "negotiated",
-            "orchestrated", "spearheaded", "transformed", "streamlined",
-            "automated", "architected", "deployed", "migrated", "consolidated",
-            "mentored", "trained", "supervised", "coordinated", "executed",
-            "analyzed", "optimized", "secured", "maintained", "administered",
-            "oversaw", "pioneered", "introduced", "resolved", "eliminated",
-        }
-
-        # Patterns that indicate a bullet point
-        BULLET_PREFIXES = re.compile(
-            r"^(?:"
-            r"[-*•◦▪▸►➤→‣⁃]\s+"          # Common bullet chars
-            r"|\d+[.)]\s+"                  # Numbered lists: 1. or 1)
-            r"|[a-z][.)]\s+"               # Lettered lists: a. or a)
-            r")"
-        )
-
-        bullets = []
-        lines = text.splitlines()
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped or len(stripped) < 15:
-                continue
-
-            # Skip likely headers (all caps, very short, or no lowercase)
-            if stripped.isupper() and len(stripped) < 60:
-                continue
-            # Skip contact info patterns
-            if "@" in stripped and len(stripped) < 80:
-                continue
-            if re.match(r"^\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", stripped):
-                continue
-            # Skip dates-only lines
-            if re.match(r"^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", stripped):
-                if len(stripped) < 40:
-                    continue
-
-            is_bullet = False
-            clean_text = stripped
-
-            # Check for bullet prefix
-            m = BULLET_PREFIXES.match(stripped)
-            if m:
-                is_bullet = True
-                clean_text = stripped[m.end():].strip()
-
-            # Check for action verb start (common in resume bullets)
-            if not is_bullet:
-                first_word = stripped.split()[0].rstrip(",:;").lower()
-                if first_word in ACTION_VERBS:
-                    is_bullet = True
-                    clean_text = stripped
-
-            if is_bullet and len(clean_text) >= 15 and len(clean_text) <= 500:
-                bullets.append({
-                    "section": "experience",
-                    "role": "",
-                    "text": clean_text,
-                    "source": filename,
-                    "priority": "normal",
-                })
-
-        return bullets
+        from jobhunter.core.bullet_extract import smart_extract_bullets
+        return smart_extract_bullets(text, filename)
 
     @staticmethod
     def _parse_library_md(path: str) -> list[dict]:
