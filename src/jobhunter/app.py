@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,25 @@ from PySide6.QtCore import Qt
 from jobhunter.config import Config
 
 log = logging.getLogger(__name__)
+
+
+def _ensure_std_streams() -> None:
+    """Guard against sys.stdout/stderr being None in a windowed build.
+
+    PyInstaller builds with ``console=False`` set stdout/stderr to None.
+    Any library that writes to them — logging, and tqdm progress bars from
+    huggingface_hub during the first-run model download — crashes with
+    ``AttributeError: 'NoneType' object has no attribute 'write'``.
+    Redirect the missing streams to os.devnull so writes go nowhere safely.
+    """
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+    # Belt-and-suspenders: also suppress the HuggingFace download progress
+    # bar so it never tries to render, download model weights quietly.
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
 
 class MainWindow(QMainWindow):
@@ -164,6 +184,8 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     """Entry point for the JobHunter application."""
+    _ensure_std_streams()
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
