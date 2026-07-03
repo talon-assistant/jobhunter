@@ -105,10 +105,14 @@ class ResumeLibraryTab(QWidget):
         right_layout.addWidget(self._bullet_list, stretch=1)
 
         # Edit area
-        edit_group = QGroupBox("Edit Bullet")
+        edit_group = QGroupBox("Edit / Add Bullet")
         edit_layout = QVBoxLayout(edit_group)
         self._edit_text = QTextEdit()
         self._edit_text.setMaximumHeight(80)
+        self._edit_text.setPlaceholderText(
+            "Select a bullet to edit it, or type a new bullet here and click "
+            "Save to add it to the selected section."
+        )
         edit_layout.addWidget(self._edit_text)
 
         edit_buttons = QHBoxLayout()
@@ -243,12 +247,37 @@ class ResumeLibraryTab(QWidget):
             self._priority_combo.setCurrentText(b.get("priority", "normal"))
 
     def _on_save_edit(self) -> None:
+        text = self._edit_text.toPlainText().strip()
+        if not text:
+            QMessageBox.information(
+                self, "Nothing to Save", "The bullet text box is empty."
+            )
+            return
+
+        priority = self._priority_combo.currentText()
+
+        # A bullet is selected -> update it in place.
         if self._selected_bullet_id:
-            text = self._edit_text.toPlainText().strip()
-            if text:
-                self.db.update_bullet(self._selected_bullet_id, text=text)
-                self._refresh_bullets()
-                self._set_status("Bullet updated")
+            self.db.update_bullet(self._selected_bullet_id, text=text, priority=priority)
+            self._refresh_bullets()
+            self._set_status("Bullet updated")
+            return
+
+        # Nothing selected -> treat this as adding a new bullet.
+        section = self._selected_section
+        if not section:
+            QMessageBox.warning(
+                self, "No Section",
+                "Pick a section on the left (or click '+ Add Section') "
+                "before saving a new bullet.",
+            )
+            return
+
+        self.db.add_bullet(section, text, source_file="manual", priority=priority)
+        self._edit_text.clear()
+        self._refresh_bullets()
+        self._refresh_sections()
+        self._set_status(f"Bullet added to '{section}'")
 
     def _on_delete_bullet(self) -> None:
         if not self._selected_bullet_id:
