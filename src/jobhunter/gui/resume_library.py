@@ -157,6 +157,15 @@ class ResumeLibraryTab(QWidget):
         quick_layout.addLayout(quick_input_row)
 
         import_row = QHBoxLayout()
+        btn_coach = QPushButton("✨ Bullet Coach")
+        btn_coach.setProperty("primary", True)
+        btn_coach.setToolTip(
+            "Describe what you did in plain words — the AI drafts strong "
+            "bullets and asks for the numbers instead of making them up."
+        )
+        btn_coach.clicked.connect(self._on_open_coach)
+        import_row.addWidget(btn_coach)
+
         btn_import = QPushButton("Import Resume File(s)")
         btn_import.clicked.connect(self._on_import_files)
         import_row.addWidget(btn_import)
@@ -370,6 +379,22 @@ class ResumeLibraryTab(QWidget):
         worker.error.connect(lambda e: QMessageBox.warning(self, "Error", e))
         self._workers.append(worker)
         worker.start()
+
+    # ------------------------------------------------------------------
+    # Bullet Coach
+    # ------------------------------------------------------------------
+
+    def _on_open_coach(self) -> None:
+        from jobhunter.gui.bullet_coach import BulletCoachDialog
+
+        dialog = BulletCoachDialog(
+            self.db, self.llm,
+            default_section=self._selected_section or "experience",
+            parent=self,
+        )
+        dialog.exec()
+        self._refresh_sections()
+        self._refresh_bullets()
 
     # ------------------------------------------------------------------
     # File import

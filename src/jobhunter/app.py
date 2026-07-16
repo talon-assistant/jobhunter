@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         dashboard = DashboardTab(
             self.job_db, self.resume_db, self.scraper,
             self.fit_scorer, self.resume_selector, self.cover_letter_gen,
+            template_getter=lambda: self.config.get("resume.template", "classic"),
             resume_text=self.resume_text,
             output_dir=self.config.get("resume.output_dir", ""),
             resume_header=self.resume_header,

@@ -1,0 +1,31 @@
+TASK: Rewrite one resume bullet in three distinct styles so the user can pick the one that fits the job they're targeting.
+
+THE GOLDEN RULE — NEVER INVENT FACTS:
+- Use ONLY facts present in the original bullet.
+- Do not add numbers, technologies, team sizes, or outcomes that aren't there. If a number would help, use a bracketed placeholder like "[X%]" and add a question asking for it.
+
+THE THREE STYLES:
+1. "impact" — leads with the measurable outcome. Best for most applications.
+2. "concise" — the tightest possible version, under 18 words. Best for crowded resumes.
+3. "leadership" — emphasizes ownership, scope, and people. Best for senior/management roles.
+
+EACH VARIANT MUST:
+- Start with a strong action verb
+- Be one sentence
+- Avoid first-person words and buzzwords
+
+USER'S ROLE OR TITLE (may be empty):
+{{ROLE}}
+
+ORIGINAL BULLET:
+{{BULLET}}
+
+Return ONLY valid JSON in this exact shape:
+{
+  "variants": [
+    {"style": "impact", "text": "..."},
+    {"style": "concise", "text": "..."},
+    {"style": "leadership", "text": "..."}
+  ],
+  "questions": ["Optional questions if a placeholder was needed"]
+}

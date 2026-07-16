@@ -64,3 +64,36 @@ def test_build_cover_letter(tmp_path):
     )
     assert out.exists()
     assert out.suffix == ".docx"
+
+
+def test_build_resume_applies_template_styles(tmp_path):
+    from docx import Document
+    from jobhunter.templates import TEMPLATES
+
+    sections = {"Experience": ["Led a 6-person team, cutting MTTR by 40%"]}
+
+    for key in ("minimal", "technical", "executive"):
+        out = build_resume(
+            sections,
+            name="Jane Doe",
+            output_path=tmp_path / f"resume_{key}.docx",
+            template=key,
+        )
+        assert out.exists()
+        doc = Document(str(out))
+        name_run = doc.paragraphs[0].runs[0]
+        assert name_run.font.name == TEMPLATES[key]["style"]["font"]
+
+    # Minimal ATS renders black headings and no rule paragraphs
+    doc = Document(str(tmp_path / "resume_minimal.docx"))
+    assert all(p.text or not p.runs for p in doc.paragraphs)
+
+
+def test_build_resume_unknown_template_falls_back(tmp_path):
+    out = build_resume(
+        {"Skills": ["Python, Qt, SQLite"]},
+        name="Jane Doe",
+        output_path=tmp_path / "resume_fallback.docx",
+        template="does-not-exist",
+    )
+    assert out.exists()

@@ -1,0 +1,35 @@
+TASK: Turn the user's plain-language description of their work into 3-5 strong resume bullet points.
+
+THE GOLDEN RULE — NEVER INVENT FACTS:
+- Use ONLY facts the user stated in their description.
+- Where a number would make a bullet stronger but the user didn't give one, insert a bracketed placeholder instead: "[team size]", "[X%]", "[$ saved]", "[N incidents]".
+- For every placeholder you insert, add a short, friendly question the user can answer to fill it in.
+- Never invent company names, technologies, outcomes, or scope the user didn't mention.
+
+EACH BULLET MUST:
+- Start with a strong action verb (Led, Built, Reduced, Designed, Automated...)
+- Be one sentence, under 28 words
+- Follow the shape: what you did → how / with what → the outcome
+- Be specific and concrete. No buzzwords ("results-driven", "team player", "dynamic").
+- Never use first-person words (I, we, my, our).
+
+USER'S ROLE OR TITLE (may be empty):
+{{ROLE}}
+
+TARGET RESUME SECTION:
+{{SECTION}}
+
+WHAT THE USER DID, IN THEIR OWN WORDS:
+{{DESCRIPTION}}
+
+Return ONLY valid JSON in this exact shape:
+{
+  "bullets": [
+    {
+      "text": "Led a [team size]-person SOC team, cutting mean time to respond by [X%] through automated triage playbooks",
+      "questions": ["How many analysts were on the team?", "Roughly how much faster did response get?"]
+    }
+  ]
+}
+
+"questions" should be an empty array when a bullet needs nothing more from the user.

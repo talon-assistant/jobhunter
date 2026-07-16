@@ -369,6 +369,15 @@ class BulletReviewPage(QWizardPage):
         btn_dedup.clicked.connect(self._on_dedup)
         list_btns.addWidget(btn_dedup)
 
+        btn_coach = QPushButton("✨ Bullet Coach")
+        btn_coach.setToolTip(
+            "No resume handy, or missing your best work? Describe what you "
+            "did in plain words and the AI drafts bullets — without making "
+            "up numbers."
+        )
+        btn_coach.clicked.connect(self._on_open_coach)
+        list_btns.addWidget(btn_coach)
+
         self._count_label = QLabel("0 bullets")
         self._count_label.setProperty("dim", True)
         list_btns.addWidget(self._count_label)
@@ -706,6 +715,42 @@ class BulletReviewPage(QWizardPage):
         if reply == QMessageBox.Yes:
             for idx in sorted(to_remove, reverse=True):
                 self._bullets.pop(idx)
+            self._refresh_list()
+
+    def _wizard_llm(self) -> LLMClient | None:
+        """Build an LLM client from the provider chosen earlier in the wizard."""
+        provider = self.config.get("llm.provider", "claude-cli")
+        api_key = ""
+        try:
+            import keyring
+            api_key = keyring.get_password("jobhunter", f"api_key_{provider}") or ""
+        except Exception:
+            pass
+        try:
+            llm = LLMClient(provider=provider, api_key=api_key)
+            return llm if llm.is_healthy() else None
+        except Exception:
+            return None
+
+    def _on_open_coach(self) -> None:
+        """Draft bullets from plain-language descriptions — no resume needed."""
+        from jobhunter.gui.bullet_coach import BulletCoachDialog
+
+        dialog = BulletCoachDialog(
+            None, self._wizard_llm(),
+            default_section="experience",
+            parent=self,
+        )
+        dialog.exec()
+        if dialog.collected:
+            for b in dialog.collected:
+                self._bullets.append({
+                    "section": b["section"],
+                    "role": "",
+                    "text": b["text"],
+                    "source": "bullet_coach",
+                    "priority": "normal",
+                })
             self._refresh_list()
 
     def get_bullets(self) -> list[dict]:

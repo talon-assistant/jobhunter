@@ -16,7 +16,11 @@
     "scraping": {
         "linkedin_profile_dir": "",
         "scrape_delay": 4,
-        "enabled_boards": ["linkedin", "dice", "builtin"]
+        "enabled_boards": [
+            "linkedin",
+            "dice",
+            "builtin"
+        ]
     },
     "resume": {
         "name": "",
@@ -24,7 +28,8 @@
         "phone": "",
         "location": "",
         "output_dir": "",
-        "style_rules": "No em dashes. Direct executive tone. 3-4 paragraphs. Under one page."
+        "style_rules": "No em dashes. Direct executive tone. 3-4 paragraphs. Under one page.",
+        "template": "classic"
     },
     "export": {
         "output_dir": ""

@@ -48,6 +48,7 @@ class DashboardTab(QWidget):
         output_dir: str = "",
         resume_header: dict[str, str] | None = None,
         status_callback=None,
+        template_getter=None,
     ) -> None:
         super().__init__()
         self.db = job_db
@@ -60,6 +61,8 @@ class DashboardTab(QWidget):
         self.output_dir = output_dir or str(Path.home() / "Documents" / "JobHunter")
         self.header = resume_header or {}
         self._status_cb = status_callback
+        # Callable so a template change in Settings applies without restart
+        self._template_getter = template_getter or (lambda: "classic")
         self._workers: list[SimpleWorker] = []
 
         # Model
@@ -78,6 +81,15 @@ class DashboardTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+
+        # -- Focus line: one calm sentence about what matters today --
+        self._focus_label = QLabel("")
+        self._focus_label.setWordWrap(True)
+        self._focus_label.setStyleSheet(
+            "padding: 6px 8px; border-radius: 4px; "
+            "background-color: rgba(129, 199, 132, 0.12); color: #a5d6a7;"
+        )
+        layout.addWidget(self._focus_label)
 
         # -- Top bar: URL input + actions --
         top = QHBoxLayout()
@@ -164,6 +176,7 @@ class DashboardTab(QWidget):
         # Action buttons
         actions = QHBoxLayout()
         for label, slot in [
+            ("Talking Points", self._on_copy_talking_points),
             ("Prepare All", self._on_prepare_all),
             ("Tailored Resume", self._on_prepare_resume),
             ("Cover Letter", self._on_prepare_letter),
@@ -210,6 +223,45 @@ class DashboardTab(QWidget):
         self._model.set_data(rows)
         self._on_filter_change()
         self._update_stats()
+        self._update_focus()
+
+    def _update_focus(self) -> None:
+        """One calm, actionable sentence — not a wall of numbers."""
+        try:
+            counts = self.db.get_focus_counts()
+        except Exception:
+            log.exception("Focus counts failed")
+            self._focus_label.setVisible(False)
+            return
+
+        if counts["total"] == 0:
+            self._focus_label.setText(
+                "Welcome! Start by pasting a job URL above, or set up a "
+                "recurring search in the Search URLs tab — the app will "
+                "find and score jobs for you."
+            )
+            return
+
+        pieces: list[str] = []
+        if counts["offers"]:
+            pieces.append(
+                f"🎉 {counts['offers']} offer(s) on the table — take a moment to be proud."
+            )
+        if counts["overdue_followups"]:
+            pieces.append(f"{counts['overdue_followups']} follow-up(s) due")
+        if counts["high_fit_new"]:
+            pieces.append(f"{counts['high_fit_new']} high-fit job(s) waiting for a look")
+        if counts["in_flight"]:
+            pieces.append(f"{counts['in_flight']} application(s) in flight")
+
+        if pieces:
+            self._focus_label.setText("Today: " + "  ·  ".join(pieces))
+        else:
+            found = counts["added_this_week"]
+            self._focus_label.setText(
+                f"Nothing urgent today — {found} job(s) found this week. "
+                "Run a search when you're ready; the pipeline does the sorting."
+            )
 
     def _on_filter_change(self, *_) -> None:
         score_str = self._filter_score.currentText()
@@ -257,17 +309,30 @@ class DashboardTab(QWidget):
         lines = [f"<b>{app['company']} — {app['position']}</b>"]
         lines.append(f"Score: {app.get('fit_score', 0)}  |  Status: {app.get('status', '')}")
 
-        if app.get("fit_analysis"):
-            try:
-                analysis = json.loads(app["fit_analysis"])
-                if analysis.get("summary"):
-                    lines.append(f"<br>{analysis['summary']}")
-                if analysis.get("strengths"):
-                    lines.append("<br><b>Strengths:</b> " + ", ".join(analysis["strengths"]))
-                if analysis.get("gaps"):
-                    lines.append("<b>Gaps:</b> " + ", ".join(analysis["gaps"]))
-            except (json.JSONDecodeError, TypeError):
-                pass
+        analysis = self._parse_analysis(app)
+        if analysis:
+            strengths = analysis.get("strengths") or []
+            gaps = analysis.get("gaps") or []
+            if strengths:
+                lines.append('<br><b style="color:#81c784;">Why this fits you:</b>')
+                for s in strengths:
+                    lines.append(f"&nbsp;&nbsp;✓ {s}")
+            if gaps:
+                lines.append('<b style="color:#ffb74d;">Be ready to speak to:</b>')
+                for g in gaps:
+                    lines.append(f"&nbsp;&nbsp;• {g}")
+                lines.append(
+                    '<span style="color:#888;">(Prep material for interviews — '
+                    "your cover letter should only sell the fits above.)</span>"
+                )
+            if analysis.get("summary"):
+                lines.append(f"<br><i>{analysis['summary']}</i>")
+        elif not app.get("fit_score"):
+            lines.append(
+                '<br><span style="color:#888;">Not analyzed yet — click '
+                "'Score Unscored' to see why this job fits you (or doesn't)."
+                "</span>"
+            )
 
         events = self.db.get_events(app["id"])
         if events:
@@ -300,6 +365,52 @@ class DashboardTab(QWidget):
         app = self._selected_app()
         if app and app.get("url"):
             webbrowser.open(app["url"])
+
+    @staticmethod
+    def _parse_analysis(app: dict) -> dict | None:
+        """Parse the stored fit_analysis JSON, or None."""
+        raw = app.get("fit_analysis")
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def _on_copy_talking_points(self) -> None:
+        """Copy the fit analysis as ready-to-use talking points.
+
+        Paste into a recruiter DM, a cover letter draft, or interview
+        prep notes — the strengths are your pitch, the gaps are your
+        homework.
+        """
+        app = self._selected_app()
+        if not app:
+            QMessageBox.information(self, "No Selection", "Select a job first")
+            return
+
+        analysis = self._parse_analysis(app)
+        strengths = (analysis or {}).get("strengths") or []
+        gaps = (analysis or {}).get("gaps") or []
+        if not strengths and not gaps:
+            QMessageBox.information(
+                self, "Not Analyzed Yet",
+                "This job hasn't been deep-scored. Click 'Score Unscored' "
+                "first, then talking points will be ready here.",
+            )
+            return
+
+        lines = [f"Talking points — {app['position']} at {app['company']}:"]
+        lines += [f"- {s}" for s in strengths]
+        if gaps:
+            lines.append("")
+            lines.append("Be ready to speak to (interview prep, not for the cover letter):")
+            lines += [f"- {g}" for g in gaps]
+
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText("\n".join(lines))
+        self._set_status(f"Talking points for {app['company']} copied to clipboard")
 
     def _on_delete(self) -> None:
         app = self._selected_app()
@@ -534,6 +645,7 @@ class DashboardTab(QWidget):
                 if sections:
                     resume_path = build_resume(
                         sections, output_path=out_dir / f"{company}_resume.docx",
+                        template=self._template_getter(),
                         **self.header,
                     )
                     results["resume_path"] = str(resume_path)
