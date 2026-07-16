@@ -9,9 +9,28 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
 
 log = logging.getLogger(__name__)
+
+
+def _add_horizontal_rule(doc, color: str = "CCCCCC"):
+    """Add a thin horizontal rule paragraph under a heading."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(4)
+    pPr = p._element.get_or_add_pPr()
+    pBdr = pPr.makeelement(qn("w:pBdr"), {})
+    bottom = pBdr.makeelement(qn("w:bottom"), {
+        qn("w:val"): "single",
+        qn("w:sz"): "4",
+        qn("w:space"): "1",
+        qn("w:color"): color,
+    })
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+    return p
 
 
 def _split_bold_lead(text: str) -> tuple[str, str]:
@@ -74,6 +93,7 @@ def build_resume(
     phone: str = "",
     location: str = "",
     output_path: str | Path,
+    template: str = "classic",
 ) -> Path:
     """Build a resume DOCX from selected bullets organized by section.
 
@@ -82,37 +102,57 @@ def build_resume(
     sections : dict mapping section name -> list of bullet strings
     name, email, phone, location : header contact info
     output_path : where to save the DOCX
+    template : key from jobhunter.templates.TEMPLATES (font, sizes,
+        accent color, margins, alignment). Unknown keys fall back to
+        "classic".
 
     Returns the output Path.
     """
+    from jobhunter.templates import get_template_style
+
+    style = get_template_style(template)
+    font = style["font"]
+    accent = RGBColor(*style["accent"])
+    accent_hex = "%02X%02X%02X" % style["accent"]
+    header_align = (
+        WD_ALIGN_PARAGRAPH.CENTER if style["center_header"]
+        else WD_ALIGN_PARAGRAPH.LEFT
+    )
+
     doc = Document()
 
     # Page margins
+    top, bottom, left, right = style["margins"]
     for section in doc.sections:
-        section.top_margin = Inches(0.5)
-        section.bottom_margin = Inches(0.5)
-        section.left_margin = Inches(0.75)
-        section.right_margin = Inches(0.75)
+        section.top_margin = Inches(top)
+        section.bottom_margin = Inches(bottom)
+        section.left_margin = Inches(left)
+        section.right_margin = Inches(right)
 
     # Header: Name
     if name:
         heading = doc.add_paragraph()
-        heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        heading.alignment = header_align
         run = heading.add_run(name.upper())
         run.bold = True
-        run.font.size = Pt(16)
-        run.font.name = "Calibri"
+        run.font.size = Pt(style["name_size"])
+        run.font.name = font
+        run.font.color.rgb = accent
 
     # Header: Contact line
     contact_parts = [p for p in [email, phone, location] if p]
     if contact_parts:
         contact = doc.add_paragraph()
-        contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        contact.alignment = header_align
         run = contact.add_run(" | ".join(contact_parts))
         run.font.size = Pt(10)
-        run.font.name = "Calibri"
+        run.font.name = font
+
+    if style["rules"]:
+        _add_horizontal_rule(doc, accent_hex)
 
     # Sections with bullets
+    body_size = Pt(style["body_size"])
     for section_name, bullets in sections.items():
         if not bullets:
             continue
@@ -121,11 +161,14 @@ def build_resume(
         header = doc.add_paragraph()
         run = header.add_run(section_name.upper())
         run.bold = True
-        run.font.size = Pt(12)
-        run.font.name = "Calibri"
-
-        # Horizontal rule
+        run.font.size = Pt(style["heading_size"])
+        run.font.name = font
+        run.font.color.rgb = accent
+        header.paragraph_format.space_before = Pt(8)
         header.paragraph_format.space_after = Pt(2)
+
+        if style["rules"]:
+            _add_horizontal_rule(doc, "CCCCCC")
 
         # Bullets
         for bullet_text in bullets:
@@ -135,21 +178,21 @@ def build_resume(
             if rest:
                 run_bold = p.add_run(bold_lead + " ")
                 run_bold.bold = True
-                run_bold.font.size = Pt(11)
-                run_bold.font.name = "Calibri"
+                run_bold.font.size = body_size
+                run_bold.font.name = font
 
                 run_rest = p.add_run(rest)
-                run_rest.font.size = Pt(11)
-                run_rest.font.name = "Calibri"
+                run_rest.font.size = body_size
+                run_rest.font.name = font
             else:
                 run = p.add_run(bold_lead)
-                run.font.size = Pt(11)
-                run.font.name = "Calibri"
+                run.font.size = body_size
+                run.font.name = font
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out))
-    log.info("Resume saved to %s", out)
+    log.info("Resume saved to %s (template=%s)", out, template)
     return out
 
 

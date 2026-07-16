@@ -298,6 +298,31 @@ class JobDB:
         ).fetchone()
         return row["cnt"] if row else 0
 
+    def get_focus_counts(self, *, high_fit_threshold: int = 60) -> dict[str, int]:
+        """Counts that drive the dashboard's daily focus line."""
+        from datetime import timedelta
+
+        def _count(sql: str, params: tuple = ()) -> int:
+            row = self._conn.execute(sql, params).fetchone()
+            return row["cnt"] if row else 0
+
+        week_ago = (date.today() - timedelta(days=7)).isoformat()
+        return {
+            "overdue_followups": len(self.get_overdue_followups()),
+            "high_fit_new": _count(
+                "SELECT COUNT(*) as cnt FROM applications WHERE status = 'new' AND fit_score >= ?",
+                (high_fit_threshold,),
+            ),
+            "in_flight": _count(
+                "SELECT COUNT(*) as cnt FROM applications WHERE status IN ('applied', 'interviewing')"
+            ),
+            "offers": _count(
+                "SELECT COUNT(*) as cnt FROM applications WHERE status = 'offer'"
+            ),
+            "added_this_week": self.count_since(week_ago),
+            "total": _count("SELECT COUNT(*) as cnt FROM applications"),
+        }
+
     # ------------------------------------------------------------------
     # Search URLs
     # ------------------------------------------------------------------

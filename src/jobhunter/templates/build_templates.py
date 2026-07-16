@@ -300,12 +300,123 @@ def build_compact():
     print("  Built: compact.docx")
 
 
+# ──────────────────────────────────────────────────────────────
+# Template 5: Technical
+# Skills-forward layout with a teal accent. For engineers and
+# hands-on IC roles where the stack matters as much as the story.
+# ──────────────────────────────────────────────────────────────
+
+def build_technical():
+    doc = Document()
+    _set_margins(doc, top=0.5, bottom=0.5, left=0.65, right=0.65)
+
+    ACCENT_RGB = RGBColor(0x0F, 0x76, 0x6E)
+    ACCENT_HEX = "0F766E"
+
+    p = doc.add_paragraph()
+    run = p.add_run("{{NAME}}")
+    run.bold = True
+    run.font.size = Pt(17)
+    run.font.name = "Calibri"
+    run.font.color.rgb = ACCENT_RGB
+    p.paragraph_format.space_after = Pt(0)
+
+    p = doc.add_paragraph()
+    run = p.add_run("{{EMAIL}} | {{PHONE}} | {{LOCATION}}")
+    run.font.size = Pt(9.5)
+    run.font.name = "Calibri"
+    run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
+
+    _add_horizontal_rule(doc, ACCENT_HEX)
+
+    # Skills lead the document — recruiters scanning for a stack see it first
+    for section in ["TECHNICAL SKILLS", "EXPERIENCE", "PROJECTS", "CERTIFICATIONS", "EDUCATION"]:
+        p = doc.add_paragraph()
+        run = p.add_run(section)
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.name = "Calibri"
+        run.font.color.rgb = ACCENT_RGB
+        p.paragraph_format.space_before = Pt(8)
+        p.paragraph_format.space_after = Pt(2)
+
+        _add_horizontal_rule(doc, "CCCCCC")
+
+        if section == "EXPERIENCE":
+            p = doc.add_paragraph()
+            run = p.add_run("{{ROLE_TITLE}} — {{COMPANY}}")
+            run.bold = True
+            run.font.size = Pt(10.5)
+            run.font.name = "Calibri"
+            run2 = p.add_run("  ({{DATES}})")
+            run2.font.size = Pt(9.5)
+            run2.font.name = "Calibri"
+            run2.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        _add_placeholder_bullet(doc, "{{BULLET}}", "Calibri", Pt(10))
+        _add_placeholder_bullet(doc, "{{BULLET}}", "Calibri", Pt(10))
+
+    doc.save(str(TEMPLATE_DIR / "technical.docx"))
+    print("  Built: technical.docx")
+
+
+# ──────────────────────────────────────────────────────────────
+# Template 6: Minimal ATS
+# Zero decoration: no color, no rules, standard headings.
+# For when a strict applicant tracking system is the first reader.
+# ──────────────────────────────────────────────────────────────
+
+def build_minimal():
+    doc = Document()
+    _set_margins(doc, top=0.7, bottom=0.7, left=0.8, right=0.8)
+
+    p = doc.add_paragraph()
+    run = p.add_run("{{NAME}}")
+    run.bold = True
+    run.font.size = Pt(14)
+    run.font.name = "Arial"
+    p.paragraph_format.space_after = Pt(0)
+
+    p = doc.add_paragraph()
+    run = p.add_run("{{EMAIL}} | {{PHONE}} | {{LOCATION}}")
+    run.font.size = Pt(10.5)
+    run.font.name = "Arial"
+
+    for section in ["SUMMARY", "EXPERIENCE", "SKILLS", "EDUCATION", "CERTIFICATIONS"]:
+        p = doc.add_paragraph()
+        run = p.add_run(section)
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.name = "Arial"
+        p.paragraph_format.space_before = Pt(10)
+        p.paragraph_format.space_after = Pt(2)
+
+        if section == "EXPERIENCE":
+            p = doc.add_paragraph()
+            run = p.add_run("{{ROLE_TITLE}} — {{COMPANY}}")
+            run.bold = True
+            run.font.size = Pt(10.5)
+            run.font.name = "Arial"
+            p2 = doc.add_paragraph()
+            run2 = p2.add_run("{{DATES}} | {{LOCATION}}")
+            run2.font.size = Pt(10)
+            run2.font.name = "Arial"
+
+        _add_placeholder_bullet(doc, "{{BULLET}}", "Arial", Pt(10.5))
+        _add_placeholder_bullet(doc, "{{BULLET}}", "Arial", Pt(10.5))
+
+    doc.save(str(TEMPLATE_DIR / "minimal.docx"))
+    print("  Built: minimal.docx")
+
+
 def main():
     print("Building resume templates...")
     build_classic()
     build_modern()
     build_executive()
     build_compact()
+    build_technical()
+    build_minimal()
     print(f"Done. Templates saved to {TEMPLATE_DIR}")
 
 

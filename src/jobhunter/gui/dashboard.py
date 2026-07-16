@@ -48,6 +48,7 @@ class DashboardTab(QWidget):
         output_dir: str = "",
         resume_header: dict[str, str] | None = None,
         status_callback=None,
+        template_getter=None,
     ) -> None:
         super().__init__()
         self.db = job_db
@@ -60,6 +61,8 @@ class DashboardTab(QWidget):
         self.output_dir = output_dir or str(Path.home() / "Documents" / "JobHunter")
         self.header = resume_header or {}
         self._status_cb = status_callback
+        # Callable so a template change in Settings applies without restart
+        self._template_getter = template_getter or (lambda: "classic")
         self._workers: list[SimpleWorker] = []
 
         # Model
@@ -78,6 +81,15 @@ class DashboardTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+
+        # -- Focus line: one calm sentence about what matters today --
+        self._focus_label = QLabel("")
+        self._focus_label.setWordWrap(True)
+        self._focus_label.setStyleSheet(
+            "padding: 6px 8px; border-radius: 4px; "
+            "background-color: rgba(129, 199, 132, 0.12); color: #a5d6a7;"
+        )
+        layout.addWidget(self._focus_label)
 
         # -- Top bar: URL input + actions --
         top = QHBoxLayout()
@@ -210,6 +222,45 @@ class DashboardTab(QWidget):
         self._model.set_data(rows)
         self._on_filter_change()
         self._update_stats()
+        self._update_focus()
+
+    def _update_focus(self) -> None:
+        """One calm, actionable sentence — not a wall of numbers."""
+        try:
+            counts = self.db.get_focus_counts()
+        except Exception:
+            log.exception("Focus counts failed")
+            self._focus_label.setVisible(False)
+            return
+
+        if counts["total"] == 0:
+            self._focus_label.setText(
+                "Welcome! Start by pasting a job URL above, or set up a "
+                "recurring search in the Search URLs tab — the app will "
+                "find and score jobs for you."
+            )
+            return
+
+        pieces: list[str] = []
+        if counts["offers"]:
+            pieces.append(
+                f"🎉 {counts['offers']} offer(s) on the table — take a moment to be proud."
+            )
+        if counts["overdue_followups"]:
+            pieces.append(f"{counts['overdue_followups']} follow-up(s) due")
+        if counts["high_fit_new"]:
+            pieces.append(f"{counts['high_fit_new']} high-fit job(s) waiting for a look")
+        if counts["in_flight"]:
+            pieces.append(f"{counts['in_flight']} application(s) in flight")
+
+        if pieces:
+            self._focus_label.setText("Today: " + "  ·  ".join(pieces))
+        else:
+            found = counts["added_this_week"]
+            self._focus_label.setText(
+                f"Nothing urgent today — {found} job(s) found this week. "
+                "Run a search when you're ready; the pipeline does the sorting."
+            )
 
     def _on_filter_change(self, *_) -> None:
         score_str = self._filter_score.currentText()
@@ -534,6 +585,7 @@ class DashboardTab(QWidget):
                 if sections:
                     resume_path = build_resume(
                         sections, output_path=out_dir / f"{company}_resume.docx",
+                        template=self._template_getter(),
                         **self.header,
                     )
                     results["resume_path"] = str(resume_path)

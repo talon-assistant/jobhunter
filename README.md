@@ -13,8 +13,9 @@ A setup wizard walks you through provider selection, resume import, and LinkedIn
 - **Job Dashboard** — Scrape, track, and score job listings from LinkedIn, Dice, Built In, and generic ATS pages
 - **Two-Phase Scoring** — Fast BGE embedding similarity for all jobs, deep LLM analysis for top candidates
 - **Resume Library** — Build a fabrication-proof bullet library from your existing resumes. Bulk import, deduplication, LLM-assisted refinement
+- **Bullet Coach** — Describe what you did in plain words; the AI drafts strong achievement bullets, asks for your real numbers instead of inventing them, and gives instant feedback (action verbs, metrics, buzzword warnings) as you edit
 - **Resume Tailoring** — Index-based bullet selection (the AI picks from your library, never generates fake content)
-- **ATS-Friendly Templates** — 4 built-in resume templates (Classic, Modern, Executive, Compact) optimized for ATS parsing and human readability
+- **ATS-Friendly Templates** — 6 built-in resume templates (Classic, Modern, Executive, Compact, Technical, Minimal ATS) that restyle generated resumes — pick one in Settings
 - **Cover Letters** — AI-generated cover letters grounded in your actual experience and the job description
 - **Application Timeline** — Track status changes, materials generated, follow-up reminders
 - **XLSX Export** — Export tracking data for unemployment reporting
@@ -101,7 +102,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-79 tests covering the LLM client, job database, resume database, scoring, JD sanitization, document generation, and extraction.
+100 tests covering the LLM client, job database, resume database, scoring, JD sanitization, bullet coaching, document generation, and extraction.
 
 ## Architecture
 

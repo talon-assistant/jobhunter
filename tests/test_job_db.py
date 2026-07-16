@@ -102,3 +102,27 @@ def test_stats(tmp_job_db: JobDB):
     stats = tmp_job_db.get_stats()
     assert stats.get("new") == 2
     assert stats.get("applied") == 1
+
+
+def test_focus_counts(tmp_job_db: JobDB):
+    # Empty DB: everything zero
+    counts = tmp_job_db.get_focus_counts()
+    assert counts["total"] == 0
+    assert counts["overdue_followups"] == 0
+
+    # Seed: one high-fit new, one low-fit new, one applied with overdue follow-up
+    tmp_job_db.add_application("A", "CISO", fit_score=85, jd_text="jd")
+    tmp_job_db.add_application("B", "Analyst", fit_score=20, jd_text="jd")
+    app3 = tmp_job_db.add_application("C", "Director", fit_score=70, jd_text="jd")
+    tmp_job_db.update_application(app3, status="applied", follow_up_date="2020-01-01")
+    app4 = tmp_job_db.add_application("D", "VP", fit_score=90, jd_text="jd")
+    tmp_job_db.update_application(app4, status="applied")
+    tmp_job_db.update_application(app4, status="offer")
+
+    counts = tmp_job_db.get_focus_counts(high_fit_threshold=60)
+    assert counts["total"] == 4
+    assert counts["high_fit_new"] == 1       # A (B is below threshold, C/D not 'new')
+    assert counts["overdue_followups"] == 1  # C
+    assert counts["in_flight"] == 1          # C (D moved on to offer)
+    assert counts["offers"] == 1             # D
+    assert counts["added_this_week"] == 4
