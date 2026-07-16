@@ -28,11 +28,17 @@ _DEFAULT_SECTIONS = ["experience", "skills", "summary", "projects", "education",
 
 
 class BulletCoachDialog(QDialog):
-    """Describe → draft → polish → add to library."""
+    """Describe → draft → polish → add to library.
+
+    With ``resume_db=None`` the dialog runs in *collect mode*: accepted
+    bullets accumulate on ``self.collected`` (list of {"section", "text"})
+    for the caller to store — used by the first-run wizard, which keeps
+    bullets in memory until setup finishes.
+    """
 
     def __init__(
         self,
-        resume_db: ResumeDB,
+        resume_db: ResumeDB | None,
         llm_client: LLMClient | None,
         *,
         default_section: str = "experience",
@@ -41,6 +47,7 @@ class BulletCoachDialog(QDialog):
         super().__init__(parent)
         self.db = resume_db
         self.llm = llm_client
+        self.collected: list[dict] = []
         self._workers: list[SimpleWorker] = []
         self._drafts: list[dict] = []  # {"text": str, "questions": [str]}
 
@@ -145,12 +152,15 @@ class BulletCoachDialog(QDialog):
         bottom.addWidget(QLabel("Add to section:"))
         self._section_combo = QComboBox()
         self._section_combo.setEditable(True)
-        sections = list(dict.fromkeys(self.db.get_sections() + _DEFAULT_SECTIONS))
+        existing = self.db.get_sections() if self.db else []
+        sections = list(dict.fromkeys(existing + _DEFAULT_SECTIONS))
         self._section_combo.addItems(sections)
         self._section_combo.setCurrentText(default_section)
         bottom.addWidget(self._section_combo)
 
-        self._btn_add = QPushButton("Add Checked to Library")
+        self._btn_add = QPushButton(
+            "Add Checked to Library" if self.db else "Keep Checked Bullets"
+        )
         self._btn_add.setProperty("primary", True)
         self._btn_add.clicked.connect(self._on_add_checked)
         bottom.addWidget(self._btn_add)
@@ -371,15 +381,26 @@ class BulletCoachDialog(QDialog):
         added = 0
         skipped = 0
         for draft in checked:
+            if self.db is None:
+                # Collect mode (first-run wizard): hand back to the caller
+                self.collected.append({"section": section, "text": draft["text"]})
+                added += 1
+                continue
             if self.db.find_duplicates(draft["text"], threshold=0.92):
                 skipped += 1
                 continue
             self.db.add_bullet(section, draft["text"], source_file="bullet_coach")
             added += 1
 
-        msg = f"Added {added} bullet(s) to '{section}'."
-        if skipped:
-            msg += f" Skipped {skipped} that were already in your library."
+        if self.db is None:
+            msg = (
+                f"Kept {added} bullet(s) for '{section}' — they'll appear in "
+                "the review list when you close this window."
+            )
+        else:
+            msg = f"Added {added} bullet(s) to '{section}'."
+            if skipped:
+                msg += f" Skipped {skipped} that were already in your library."
         QMessageBox.information(self, "Done", msg)
 
         # Remove the added drafts so the list reflects what's left
