@@ -9,7 +9,7 @@
 
 [Setup]
 AppName=JobHunter
-AppVersion=0.2.0
+AppVersion=0.3.0
 AppPublisher=Talon Assistant
 AppPublisherURL=https://github.com/talon-assistant/jobhunter
 DefaultDirName={autopf}\JobHunter

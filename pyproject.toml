@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jobhunter"
-version = "0.2.13"
+version = "0.3.0"
 description = "Job search assistant with AI scoring, resume tailoring, and cover letter generation"
 requires-python = ">=3.10"
 license = {text = "MIT"}
